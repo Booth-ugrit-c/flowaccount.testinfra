@@ -144,9 +144,18 @@ def scan_ref_names(deny: DenyList, names: list[str]) -> list[str]:
     return findings
 
 
-def scan_all(root: Path, deny: DenyList) -> tuple[int, int, int, list[str]]:
-    names = gitio.ref_names(root)
-    commits, blobs, findings = scan_object_list(root, deny, gitio.objects_all(root), set())
+def scan_all(
+    root: Path, deny: DenyList, prefixes: list[str] | None = None
+) -> tuple[int, int, int, list[str]]:
+    if prefixes:
+        chosen = [(n, o) for n, o in gitio.refs_with_ids(root) if n.startswith(tuple(prefixes))]
+        if not chosen:
+            raise ConfigError("--refs matched no refs, nothing would be scanned")
+        names = [n for n, _ in chosen]
+        objects = gitio.objects_from(root, [o for _, o in chosen])
+    else:
+        names, objects = gitio.ref_names(root), gitio.objects_all(root)
+    commits, blobs, findings = scan_object_list(root, deny, objects, set())
     return commits, len(names), blobs, scan_ref_names(deny, names) + findings
 
 

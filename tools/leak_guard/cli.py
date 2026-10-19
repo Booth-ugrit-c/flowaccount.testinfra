@@ -12,7 +12,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.leak_guard")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("scan")
-    sub.add_parser("scan-all")
+    sub.add_parser("scan-all").add_argument("--refs", action="append", metavar="PREFIX")
     push = sub.add_parser("push-range")
     push.add_argument("base")
     push.add_argument("head")
@@ -42,7 +42,7 @@ def _run(args: argparse.Namespace) -> int:
         summary, findings = scan.scan_working_tree(root, deny)
         summary = f"{summary} files"
     elif args.command == "scan-all":
-        commits, refs, blobs, findings = scan.scan_all(root, deny)
+        commits, refs, blobs, findings = scan.scan_all(root, deny, args.refs)
         print(f"leak-guard: scan-all {commits} commits, {refs} refs")
         summary = f"{blobs} files"
     elif args.command == "push-range":

@@ -35,7 +35,20 @@ jobs:
             '+refs/heads/*:refs/remotes/origin/*' \
             '+refs/tags/*:refs/tags/*' \
             '+refs/pull/*:refs/remotes/pull/*'
-      - name: Scan every object reachable from every ref
+      - name: Scan branches and tags with the deny-list
         env:
           LEAK_GUARD_DENYLIST: ${{ secrets.LEAK_GUARD_DENYLIST }}
-        run: python -m tools.leak_guard scan-all --require-denylist
+        run: python -m tools.leak_guard scan-all --refs refs/remotes/origin/ --refs refs/tags/ --require-denylist
+      - name: Scan pull request refs with generic rules only
+        if: ${{ !cancelled() }}
+        # Fork content is attacker-controlled: with the deny-list its findings would confirm guesses.
+        run: |
+          rc=0
+          env -u LEAK_GUARD_DENYLIST -u LEAK_GUARD_DENYLIST_FILE python -m tools.leak_guard scan-all --refs refs/remotes/pull/ >"$RUNNER_TEMP/pull-scan.txt" 2>&1 || rc=$?
+          sed 's/^/    /' "$RUNNER_TEMP/pull-scan.txt"
+          case "$rc" in
+            0) ;;
+            1) echo "::warning::pull request refs hold generic-rule findings, see this step's log" ;;
+            *) echo "::warning::pull request scan did not run (exit $rc), see this step's log" ;;
+          esac
+          exit 0

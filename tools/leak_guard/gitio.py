@@ -110,3 +110,23 @@ def objects_all(root: Path) -> list[tuple[str, str]]:
 def ref_names(root: Path) -> list[str]:
     raw = git(root, "for-each-ref", "--format=%(refname)%00")
     return [decode(n).strip("\n") for n in raw.split(b"\0") if n.strip(b"\n")]
+
+
+def refs_with_ids(root: Path) -> list[tuple[str, str]]:
+    raw = git(root, "for-each-ref", "--format=%(objectname) %(refname)%00")
+    out = []
+    for item in raw.split(b"\0"):
+        oid, _, name = decode(item).strip("\n").partition(" ")
+        if name:
+            out.append((name, oid))
+    return out
+
+
+def objects_from(root: Path, oids: list[str]) -> list[tuple[str, str]]:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-list", "--objects", "--stdin"],
+        input="\n".join(oids).encode() + b"\n", capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise GitError(f"git rev-list failed (exit {proc.returncode})")
+    return parse_object_lines(proc.stdout)
