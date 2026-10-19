@@ -176,3 +176,33 @@ def test_logs_are_fetched_only_for_started_non_control_jobs(tmp_path):
     ok, _ = collect(tmp_path, client, clock)
     names = {raw["id"]: raw["name"] for raw in github.jobs[9000]}
     assert ok and sorted(names[j] for j in fetched) == ["integration-001", "integration-002", "unit-001", "unit-002"]
+
+
+def test_failed_control_job_fails_collect_even_when_the_job_set_is_complete(tmp_path, capsys):
+    clock, github = dispatched(tmp_path)
+    for raw in github.jobs[9000]:
+        if raw["name"] == "validate":
+            raw["conclusion"] = "failure"
+    ok, lines = collect(tmp_path, github.client(), clock)
+    assert not ok
+    assert "FAILED gate g-0001: control job validate conclusion=failure" in lines[-1]
+    assert gate_file(tmp_path)["failed_reasons"] == ["control job validate conclusion=failure"]
+    assert main(["collect", "--out", str(tmp_path)], gh=github.client(), clock=clock) == 1
+    assert "collect: INCOMPLETE" in capsys.readouterr().out
+
+
+def test_failed_cancelled_or_timed_out_run_fails_collect_even_when_the_job_set_is_complete(tmp_path):
+    for conclusion in ("failure", "cancelled", "timed_out"):
+        out = tmp_path / conclusion
+        out.mkdir()
+        clock, github = dispatched(out)
+        github.runs[9000]["conclusion"] = conclusion
+        ok, lines = collect(out, github.client(), clock)
+        assert not ok
+        assert f"FAILED gate g-0001: run conclusion={conclusion}" in lines[-1]
+
+
+def test_successful_run_with_successful_control_job_still_passes(tmp_path):
+    clock, github = dispatched(tmp_path)
+    ok, _ = collect(tmp_path, github.client(), clock)
+    assert ok and gate_file(tmp_path)["failed_reasons"] == []

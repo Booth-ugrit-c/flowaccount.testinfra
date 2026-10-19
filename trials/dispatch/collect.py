@@ -9,6 +9,7 @@ from trials.dispatch.gh import GhClient, GhError
 from trials.dispatch.replay import STATE_FILE, write_state
 
 CONTROL_JOBS = ("validate",)
+BAD_RUN_CONCLUSIONS = ("failure", "cancelled", "timed_out")
 RESULT_RE = re.compile(r"workload-result (\{.*\})")
 LOG_ATTEMPTS = 3
 LOG_RETRY_S = 5.0
@@ -134,6 +135,9 @@ def _finish_gate(gh, clock, state, gate, run, out_dir, summary) -> list[str]:
     spec_jobs = [r for r in records if r["id"] not in CONTROL_JOBS]
     control = [r for r in records if r["id"] in CONTROL_JOBS]
     problems = check_gate(gate["spec_ids"], spec_jobs)
+    failed = [f"control job {r['id']} conclusion={r['conclusion']}" for r in control if r["conclusion"] != "success"]
+    if run.get("conclusion") in BAD_RUN_CONCLUSIONS:
+        failed.append(f"run conclusion={run['conclusion']}")
     stamps = [r["created_at"] for r in spec_jobs if r["created_at"]]
     ends = [r["completed_at"] for r in spec_jobs if r["completed_at"]]
     wall = _seconds(min(stamps), max(ends)) if stamps and ends else None
@@ -148,12 +152,15 @@ def _finish_gate(gh, clock, state, gate, run, out_dir, summary) -> list[str]:
         "jobs": spec_jobs,
         "control_jobs": control,
         "complete": not problems,
+        "failed_reasons": failed,
     }
     (out_dir / "gates" / f"{gate['gate_id']}.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     summary.append(f"gate {gate['gate_id']} run {gate['run_id']} jobs={len(spec_jobs)}/{len(gate['spec_ids'])} gate_wall_s={wall} conclusion={run.get('conclusion')}")
-    if not problems:
-        return []
-    return [
-        f"INCOMPLETE gate {gate['gate_id']}: missing={problems.missing} extra={problems.extra} "
-        f"non_terminal={problems.non_terminal} duplicates={problems.duplicates}"
-    ]
+    lines = [f"FAILED gate {gate['gate_id']}: {reason}" for reason in failed]
+    if problems:
+        lines.insert(
+            0,
+            f"INCOMPLETE gate {gate['gate_id']}: missing={problems.missing} extra={problems.extra} "
+            f"non_terminal={problems.non_terminal} duplicates={problems.duplicates}",
+        )
+    return lines
