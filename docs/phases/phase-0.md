@@ -23,7 +23,7 @@ Repository settings: wiki off, all actions must be pinned to a full commit SHA, 
 | Check | Result |
 |---|---|
 | Test suite | 199 passed |
-| Tree scan count | 29 files scanned, `git ls-files` 29 |
+| Tree scan count | equals `git ls-files \| wc -l` on every run (29 at the run below) |
 | Leak guard on the phase branch push | [run 39221023373](https://github.com/Booth-ugrit-c/flowaccount.testinfra/actions/runs/39221023373): deny-list loaded from the secret, 0 findings in tree, ref name and 13 pushed commits |
 | `actionlint`, `zizmor`, `shellcheck` | exit 0 locally |
 
@@ -31,7 +31,7 @@ Repository settings: wiki off, all actions must be pinned to a full commit SHA, 
 
 | Check | Broken input | Result |
 |---|---|---|
-| Leak guard rules | each of the 7 generic rules removed in turn from a copy of the package | only that rule's tests failed (4 to 12 tests each) |
+| Leak guard rules | each of the 7 generic rules removed in turn from a copy of the package | only that rule's tests failed (4 to 12 tests each); repeated on the final tree for one rule: 4 failed |
 | Dot directories | invented token in a nested dot directory | exit 1, path reported, token not printed |
 | Add-then-remove | UTF-16 file with an invented token added in one commit and removed in the next | exit 1 on `push-range` (was exit 0 before the object walk) |
 | Ref names | branch name, tag name and tag-of-tag message with an invented token | refused (were accepted before `ref-name` and the object walk) |
