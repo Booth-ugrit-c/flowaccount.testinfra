@@ -24,6 +24,13 @@ def _ipv4_allowed(m: re.Match) -> bool:
     return (a, b, c) in {(192, 0, 2), (198, 51, 100), (203, 0, 113)}
 
 
+_LONG_HEX = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}(?![0-9A-Fa-f])")
+
+
+def _inside_long_hex(m: re.Match) -> bool:
+    return any(h.start() <= m.start() and m.end() <= h.end() for h in _LONG_HEX.finditer(m.string))
+
+
 _ALLOWED_EMAIL_DOMAINS = ("example.com", "example.org")
 _ALLOWED_EMAIL_ADDRESSES = {"noreply@anthropic.com", "noreply@github.com", "git@github.com"}
 
@@ -39,7 +46,7 @@ def _email_allowed(m: re.Match) -> bool:
 
 
 RULES = [
-    Rule("twelve-digit-id", re.compile(r"(?<!\d)\d{12}(?!\d)")),
+    Rule("twelve-digit-id", re.compile(r"(?<!\d)\d{12}(?!\d)"), _inside_long_hex),
     Rule(
         "ipv4-address",
         re.compile(r"(?<!\d)(?<!\d\.)\d{1,3}(?:\.\d{1,3}){3}(?!\d|\.\d)"),
