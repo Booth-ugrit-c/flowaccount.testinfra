@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import statistics
 
-from .build import Calibration
-
-
 def quartiles(values: list[float]) -> tuple[float, float, float] | None:
     if not values:
         return None
@@ -21,8 +18,10 @@ def describe(values: list[float]) -> str:
     return f"median {q[1]:.1f}s IQR {q[0]:.1f}-{q[2]:.1f}s n={len(values)}"
 
 
-def render(result: Calibration, lanes: list[str], api: dict | None = None) -> str:
-    gates = result.today["gates"]
+def render(
+    today: dict, lanes: list[str], warnings: list[str], off_runner_jobs: int | None = None, api: dict | None = None
+) -> str:
+    gates = today["gates"]
     lines = []
     for lane in lanes:
         jobs = [(g, j) for g in gates for j in g["jobs"] if j["lane"] == lane]
@@ -34,7 +33,7 @@ def render(result: Calibration, lanes: list[str], api: dict | None = None) -> st
             f"lane {lane}: jobs {len(jobs)}, gates {len(member_gates)}, "
             f"range {member_gates[0]['created_at']} .. {member_gates[-1]['created_at']}"
         )
-        for split in ("fit", "holdout"):
+        for split in ("fit", "holdout", "excluded"):
             part = [(g, j) for g, j in jobs if j["split"] == split]
             lines.append(
                 f"  {split}: gates {sum(1 for g in member_gates if g['splits'][lane] == split)}, jobs {len(part)}"
@@ -45,9 +44,10 @@ def render(result: Calibration, lanes: list[str], api: dict | None = None) -> st
         lines.append(f"  jobs after flip: {sum(1 for _, j in jobs if j['after_flip'])}")
         sources = sorted({j["services_source"] for _, j in jobs})
         lines.append(f"  services source: {', '.join(sources)}")
-    lines.append(f"manual-label jobs (not a lane): {result.manual_jobs}")
-    lines.append(f"matched by label but ran on another runner: {result.off_runner_jobs}")
-    lines.extend(result.warnings)
+    lines.append(f"manual-label jobs (not a lane): {today['manual_label_jobs']}")
+    if off_runner_jobs is not None:
+        lines.append(f"matched by label but ran on another runner: {off_runner_jobs}")
+    lines.extend(warnings)
     if api:
         lines.append(
             f"scanned runs {api['runs']}, jobs {api['jobs']}; gh api calls {api['calls']}, "
