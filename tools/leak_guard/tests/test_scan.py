@@ -106,3 +106,16 @@ def test_findings_count_is_per_entry_per_line(repo):
 def test_crlf_files_match_like_lf_files(repo):
     commit(repo, {"a.txt": f"one\r\n{TOKEN}\r\n"})
     assert "a.txt:2 deny-list entry #1" in run_cli(repo, "scan", denylist=TOKEN).stdout
+
+
+def test_hex_digest_and_sha_pins_holding_a_digit_run_are_clean_but_a_bare_id_is_not(repo):
+    run = "1234" + "5678" + "9012"
+    digest = "a" * 20 + run + "b" * 32
+    sha = "c" * 10 + run + "d" * 18
+    commit(repo, {"pins.txt": f"image@sha256:{digest}\nuses: org/act@{sha} # v1\n"})
+    assert run_cli(repo, "scan", denylist=TOKEN).returncode == 0
+    write(repo, "pins.txt", f"image@sha256:{digest}\naccount: {run}\n")
+    proc = run_cli(repo, "scan", denylist=TOKEN)
+    assert proc.returncode == 1
+    assert "pins.txt:2 twelve-digit-id" in proc.stdout
+    assert "pins.txt:1" not in proc.stdout
