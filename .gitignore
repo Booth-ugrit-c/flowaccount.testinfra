@@ -11,3 +11,5 @@ calibration/
 *.calibration.json
 trials/raw/
 *.private.*
+leak-guard-denylist*
+_testinfra-private/
