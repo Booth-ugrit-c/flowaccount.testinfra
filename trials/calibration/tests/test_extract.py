@@ -166,3 +166,12 @@ def test_summary_reports_median_and_iqr_per_split(run_cli, capsys):
     assert "duration_s   median 40.0s IQR 25.0-55.0s n=7" in captured.out
     assert "queue_wait_s median 4.0s IQR 4.0-4.0s n=7" in captured.out
     assert "duration_s   median 90.0s IQR 85.0-95.0s n=3" in captured.out
+
+
+def test_parallel_job_fetch_gives_the_same_output_as_serial(run_cli, capsys, tmp_path):
+    runs, jobs = standard_world(12)
+    _, out_serial, _, _ = run_cli(config_dict(), FakeGh(runs, jobs), capsys)
+    serial = (out_serial / "today.json").read_text("utf-8")
+    (out_serial / "today.json").unlink()
+    _, out_parallel, _, _ = run_cli(config_dict(workers=6), FakeGh(runs, jobs), capsys)
+    assert (out_parallel / "today.json").read_text("utf-8") == serial

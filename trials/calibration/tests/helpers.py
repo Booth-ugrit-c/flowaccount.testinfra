@@ -29,6 +29,7 @@ def config_dict(**over) -> dict:
             {"name": "integration", "job_pattern": "^integration", "default_services": ["sql", "cache"]},
         ],
         "service_patterns": [{"pattern": "document-store", "services": ["document"]}],
+        "workers": 1,
     }
     cfg.update(over)
     return cfg

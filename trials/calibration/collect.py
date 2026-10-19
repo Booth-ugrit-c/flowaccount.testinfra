@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -63,10 +64,14 @@ def fetch_jobs(client: GhClient, cfg: Config, run_id: int) -> list[dict]:
 def collect(client: GhClient, cfg: Config) -> tuple[list[Observed], dict]:
     observed: list[Observed] = []
     seen = {"runs": 0, "jobs": 0}
-    for workflow in cfg.workflows:
-        for run in fetch_runs(client, cfg, workflow):
-            seen["runs"] += 1
-            for job in fetch_jobs(client, cfg, run["id"]):
-                seen["jobs"] += 1
-                observed.append(Observed(job, run["id"], run["html_url"], workflow))
+    pool = ThreadPoolExecutor(max_workers=cfg.workers)
+    try:
+        for workflow in cfg.workflows:
+            runs = fetch_runs(client, cfg, workflow)
+            for run, jobs in zip(runs, pool.map(lambda r: fetch_jobs(client, cfg, r["id"]), runs)):
+                seen["runs"] += 1
+                seen["jobs"] += len(jobs)
+                observed += [Observed(job, run["id"], run["html_url"], workflow) for job in jobs]
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
     return observed, seen

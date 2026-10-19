@@ -35,6 +35,7 @@ class Config:
     manual_runners: frozenset[str]
     lanes: tuple[Lane, ...]
     service_patterns: tuple[tuple[re.Pattern, tuple[str, ...]], ...]
+    workers: int = 8
 
 
 def parse_time(value: object, key: str) -> datetime:
@@ -110,10 +111,13 @@ def parse_config(raw: object) -> Config:
             raise ConfigError("config key service_patterns: each entry needs pattern and services")
         service_patterns.append((_pattern(entry["pattern"], "service_patterns.pattern"),
                                  _services(entry["services"], "service_patterns.services")))
+    workers = raw.get("workers", 8)
+    if not isinstance(workers, int) or isinstance(workers, bool) or not 1 <= workers <= 16:
+        raise ConfigError("config key workers: expected an integer from 1 to 16")
     return Config(
         repo=repo, workflows=_string_list(raw, "workflows"), window_start=start, window_end=end,
         flip=parse_time(raw["flip"], "flip"), match_field=raw["match_field"], runners=runners,
-        manual_runners=manual, lanes=tuple(lanes), service_patterns=tuple(service_patterns),
+        manual_runners=manual, lanes=tuple(lanes), service_patterns=tuple(service_patterns), workers=workers,
     )
 
 

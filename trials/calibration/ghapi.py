@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 import time
 from typing import Callable
 
@@ -47,6 +48,7 @@ class GhClient:
         self.calls = 0
         self.rate_probes = 0
         self.rate_waits = 0
+        self.lock = threading.Lock()
 
     def get(self, path: str) -> dict:
         return json.loads(self._call(["api", path]))
@@ -61,7 +63,8 @@ class GhClient:
         failures = 0
         rate_waits = 0
         while True:
-            self.calls += 1
+            with self.lock:
+                self.calls += 1
             try:
                 out = self.runner(args)
                 json.loads(out)
@@ -70,26 +73,27 @@ class GhClient:
                 if is_rate_limited(exc.stderr):
                     rate_waits += 1
                     if rate_waits > MAX_RATE_WAITS:
-                        raise ApiError("rate limit persisted after repeated waits") from None
+                        raise ApiError(f"rate limit persisted after repeated waits: {args[-1]}") from None
                     self._wait_for_reset()
                     continue
                 if any(marker in exc.stderr for marker in PERMANENT_MARKERS):
-                    raise ApiError(f"gh api failed: {exc.stderr.strip()[:200]}") from None
+                    raise ApiError(f"gh api failed on {args[-1]}: {exc.stderr.strip()[:200]}") from None
                 failure = exc.stderr.strip()[:200]
             except ValueError:
                 failure = "response was not valid JSON"
             failures += 1
             if failures > self.retries:
-                raise ApiError(f"gh api failed after {self.retries} retries: {failure}")
+                raise ApiError(f"gh api failed after {self.retries} retries on {args[-1]}: {failure}")
             self.sleep(self.backoff_s * 2 ** (failures - 1))
 
     def _wait_for_reset(self) -> None:
-        self.rate_probes += 1
+        with self.lock:
+            self.rate_probes += 1
+            self.rate_waits += 1
         try:
             core = json.loads(self.runner(["api", "rate_limit"]))["resources"]["core"]
             remaining, reset = core["remaining"], core["reset"]
         except (GhError, ValueError, KeyError, TypeError):
             remaining, reset = 0, self.now() + SECONDARY_LIMIT_PAUSE_S
-        self.rate_waits += 1
         pause = max(reset - self.now(), 0.0) + 1.0 if remaining == 0 else SECONDARY_LIMIT_PAUSE_S
         self.sleep(pause)
