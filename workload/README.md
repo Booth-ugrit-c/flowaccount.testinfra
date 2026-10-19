@@ -11,6 +11,10 @@ python -m workload leftovers               # containers named wl-trial-*; exit 1
 
 `run` prints one `workload-result {json}` line on stdout (progress goes to stderr) and exits 0 only when `ok` is true. Exit 2 means an invalid spec, 1 a runtime failure, 143 a SIGTERM.
 
+Log prefixes for grep: result line `workload-result `, progress lines `workload: `; both start with `workload`.
+
+Tests: by default only the `cache` service is started for real; set `WORKLOAD_DOCKER_FULL=1` to also pull and start the other four types (about 7 GB of images).
+
 Services (images pinned by digest, readiness probed with the image's own client):
 
 | type | image |

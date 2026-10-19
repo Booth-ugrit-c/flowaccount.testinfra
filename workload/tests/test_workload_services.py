@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import os
 import re
 
 import pytest
@@ -8,6 +9,10 @@ from workload import runner, services, spec as spec_mod
 from workload.tests.helpers import docker_available, result_of, run_cli, spec
 
 needs_docker = pytest.mark.skipif(not docker_available(), reason="docker daemon not available")
+needs_full_docker = pytest.mark.skipif(
+    os.environ.get("WORKLOAD_DOCKER_FULL") != "1" or not docker_available(),
+    reason="set WORKLOAD_DOCKER_FULL=1 (and have docker) to pull the large service images",
+)
 PINNED = re.compile(r"^[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")
 
 
@@ -127,7 +132,17 @@ def test_leftovers_command_sees_a_stray_container():
     assert run_cli("leftovers").returncode == 0
 
 
-@needs_docker
+@needs_full_docker
+@pytest.mark.parametrize("kind", ["sql", "document", "search", "queue"])
+def test_each_large_service_type_starts_healthy(kind):
+    proc = run_cli("run", "--job-json", json.dumps(spec(id="integration-002", lane="integration",
+                                                         cpu_seconds=0.5, services=[kind])), timeout=1800)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert result_of(proc)["ok"] is True
+    assert run_cli("leftovers").returncode == 0
+
+
+@needs_full_docker
 def test_every_service_type_starts_healthy_together():
     every = list(spec_mod.SERVICE_TYPES)
     proc = run_cli("run", "--job-json", json.dumps(spec(id="integration-001", lane="integration",
