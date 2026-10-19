@@ -1,0 +1,74 @@
+name: leak-guard
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leak-guard-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  leak-guard:
+    name: leak-guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Scan tree, ref name and pushed range
+        env:
+          LEAK_GUARD_DENYLIST: ${{ secrets.LEAK_GUARD_DENYLIST }}
+          EVENT_NAME: ${{ github.event_name }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
+          PUSHED_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          zeros=0000000000000000000000000000000000000000
+          args=(--require-denylist)
+          if [ "$IS_FORK" = "true" ]; then
+            args=()
+            echo "::warning::fork pull request has no secrets, running generic rules only"
+          fi
+          rc=0
+          run() {
+            local c=0
+            "$@" || c=$?
+            if [ "$c" -gt "$rc" ]; then rc=$c; fi
+          }
+          run python -m tools.leak_guard scan "${args[@]}"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            run python -m tools.leak_guard ref-name "$PR_HEAD_REF" "${args[@]}"
+            run python -m tools.leak_guard push-range "$PR_BASE_SHA" "$PR_HEAD_SHA" "${args[@]}"
+          else
+            run python -m tools.leak_guard ref-name "$PUSHED_REF" "${args[@]}"
+            base=$PUSH_BEFORE_SHA
+            if [ "$base" = "$zeros" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+              base=$zeros
+              if [ "$PUSHED_REF" != "refs/heads/main" ] && git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+                base=$(git merge-base refs/remotes/origin/main "$PUSH_AFTER_SHA" || echo "$zeros")
+              fi
+              if [ "$base" = "$zeros" ]; then
+                git for-each-ref --format='delete %(refname)' refs/remotes | git update-ref --stdin
+              fi
+            fi
+            run python -m tools.leak_guard push-range "$base" "$PUSH_AFTER_SHA" "${args[@]}"
+          fi
+          exit "$rc"
