@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 from tools.leak_guard import denylist
@@ -157,3 +159,39 @@ def test_env_that_is_not_base64_text_is_exit_two_and_quotes_nothing(work, value)
     assert proc.returncode == 2
     assert value not in proc.stdout + proc.stderr
     assert "base64" in proc.stderr
+
+
+WIDE_LISTS = [
+    pytest.param("utf-16-le", b"", id="utf-16-le-no-bom"),
+    pytest.param("utf-16-le", b"\xff\xfe", id="utf-16-le-bom"),
+    pytest.param("utf-16-be", b"", id="utf-16-be-no-bom"),
+    pytest.param("utf-16-be", b"\xfe\xff", id="utf-16-be-bom"),
+    pytest.param("utf-32-le", b"", id="utf-32-le-no-bom"),
+    pytest.param("utf-32", b"", id="utf-32-bom"),
+]
+
+
+@pytest.mark.parametrize("encoding,bom", WIDE_LISTS)
+def test_wide_encoded_deny_list_file_is_exit_two(work, tmp_path, encoding, bom):
+    _, repo = work
+    path = tmp_path / "wide.txt"
+    path.write_bytes(bom + "alpha\nbeta\n".encode(encoding))
+    proc = run_cli(repo, "scan", env=clean_env(LEAK_GUARD_DENYLIST_FILE=str(path)))
+    assert proc.returncode == 2
+    assert "alpha" not in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("encoding,bom", WIDE_LISTS)
+def test_wide_encoded_deny_list_env_is_exit_two(work, encoding, bom):
+    _, repo = work
+    raw = bom + "alpha\nbeta\n".encode(encoding)
+    proc = run_cli(repo, "scan", env=clean_env(LEAK_GUARD_DENYLIST=base64.b64encode(raw).decode()))
+    assert proc.returncode == 2
+    assert "alpha" not in proc.stdout + proc.stderr
+
+
+def test_wide_encoded_sibling_deny_list_is_exit_two(work):
+    base, repo = work
+    (base / "_testinfra-private").mkdir()
+    (base / "_testinfra-private" / "leak-guard-denylist.txt").write_bytes("alpha\n".encode("utf-16"))
+    assert run_cli(repo, "scan").returncode == 2

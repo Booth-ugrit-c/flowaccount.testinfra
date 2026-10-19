@@ -16,6 +16,7 @@ refuse() {
     exit 1
 }
 
+remote_name=$1
 while read -r local_ref local_sha remote_ref remote_sha; do
     for ref_name in "$local_ref" "$remote_ref"; do
         "$PY" -m tools.leak_guard ref-name "$ref_name" --require-denylist </dev/null || refuse
@@ -24,6 +25,6 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         *[!0]*) ;;
         *) continue ;;
     esac
-    "$PY" -m tools.leak_guard push-range "$remote_sha" "$local_sha" --require-denylist </dev/null || refuse
+    "$PY" -m tools.leak_guard push-range "$remote_sha" "$local_sha" --remote="$remote_name" --require-denylist </dev/null || refuse
 done
 exit 0

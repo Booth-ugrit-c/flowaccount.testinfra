@@ -75,9 +75,20 @@ def object_exists(root: Path, rev: str, kind: str) -> bool:
     return proc.returncode == 0
 
 
-def objects_in_range(root: Path, base: str, head: str) -> list[tuple[str, str]]:
+def tree_entry_names(data: bytes, oid_len: int) -> list[bytes]:
+    names, pos = [], 0
+    while pos < len(data):
+        space = data.index(b" ", pos)
+        end = data.index(b"\0", space)
+        names.append(data[space + 1 : end])
+        pos = end + 1 + oid_len
+    return names
+
+
+def objects_in_range(root: Path, base: str, head: str, remote: str | None = None) -> list[tuple[str, str]]:
     if ZEROS.match(base) or not object_exists(root, base, "commit"):
-        raw = git(root, "rev-list", "--objects", head, "--not", "--remotes")
+        known = f"--remotes={remote}" if remote else "--remotes"
+        raw = git(root, "rev-list", "--objects", head, "--not", known)
     else:
         raw = git(root, "rev-list", "--objects", f"{base}..{head}")
     out = []

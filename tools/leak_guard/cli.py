@@ -15,6 +15,7 @@ def _parser() -> argparse.ArgumentParser:
     push = sub.add_parser("push-range")
     push.add_argument("base")
     push.add_argument("head")
+    push.add_argument("--remote")
     sub.add_parser("ref-name").add_argument("name")
     sub.add_parser("scan-text")
     for name in sub.choices.values():
@@ -40,7 +41,9 @@ def _run(args: argparse.Namespace) -> int:
         summary, findings = scan.scan_working_tree(root, deny)
         summary = f"{summary} files"
     elif args.command == "push-range":
-        files, commits, findings = scan.scan_push_range(root, deny, args.base, args.head)
+        files, commits, findings = scan.scan_push_range(
+            root, deny, args.base, args.head, args.remote
+        )
         print(f"leak-guard: push-range {commits} commits, {args.base[:12]}..{args.head[:12]}")
         summary = f"{files} files"
     elif args.command == "ref-name":
