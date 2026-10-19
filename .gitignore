@@ -14,3 +14,6 @@ trials/raw/
 leak-guard-denylist*
 _testinfra-private/
 !/trials/calibration/
+today*.json
+id-map*.json
+dispatch.json
