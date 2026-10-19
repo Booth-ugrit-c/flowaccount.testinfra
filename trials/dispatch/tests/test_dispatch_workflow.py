@@ -20,3 +20,10 @@ def test_workflow_has_no_concurrency_group_and_no_secrets():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "concurrency:" not in text and "secrets." not in text and "continue-on-error" not in text
     assert "permissions:\n  contents: read" in text
+
+
+def test_matrix_job_does_not_wait_on_another_job():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    matrix_block = text.split("\n  run:\n", 1)[1]
+    assert "fromJSON(inputs.jobs)" in matrix_block
+    assert "needs:" not in text
