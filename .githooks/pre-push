@@ -11,7 +11,7 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r local_ref local_sha _ remote_sha; do
     case "$local_sha" in
         *[!0]*) ;;
         *) continue ;;
