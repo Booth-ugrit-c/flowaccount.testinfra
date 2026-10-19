@@ -137,3 +137,19 @@ def test_deleting_a_denied_branch_name_is_refused(pair):
     proc = push(work, f":{name}")
     assert proc.returncode != 0
     assert remote_head(bare, name) is not None
+
+
+def test_a_second_remote_does_not_hide_history_from_the_scan(pair, tmp_path):
+    bare, work = pair
+    other = tmp_path / "other.git"
+    other.mkdir()
+    git(other, "init", "-q", "--bare", "-b", "main")
+    git(work, "remote", "add", "other", str(other))
+    assert push(work, "main").returncode == 0
+    git(work, "checkout", "-q", "-b", "leaky")
+    commit(work, {"s.txt": f"{TOKEN}\n"})
+    commit(work, {"s.txt": None})
+    git(work, "push", "--no-verify", "other", "leaky:refs/heads/x")
+    proc = push(work, "leaky")
+    assert proc.returncode != 0
+    assert remote_head(bare, "refs/heads/leaky") is None

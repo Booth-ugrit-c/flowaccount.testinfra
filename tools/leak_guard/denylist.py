@@ -62,18 +62,30 @@ def parse(content: str, source: str) -> DenyList:
     return DenyList(tuple(entries), source)
 
 
+WIDE_BOMS = (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
+
+
+def _utf8_text(raw: bytes, source: str) -> str:
+    if raw.startswith(WIDE_BOMS) or b"\x00" in raw:
+        raise ConfigError(f"{source} is not UTF-8 text (UTF-16/32 byte marks or NUL bytes found)")
+    return raw.decode("utf-8-sig", errors="replace")
+
+
 def _decode_env(encoded: str) -> str:
     try:
-        return base64.b64decode(encoded, validate=True).decode("utf-8-sig")
+        raw = base64.b64decode(encoded, validate=True)
+        raw.decode("utf-8")
     except (binascii.Error, UnicodeDecodeError):
         raise ConfigError(f"{ENV_CONTENT} is not base64 of UTF-8 text") from None
+    return _utf8_text(raw, ENV_CONTENT)
 
 
 def _read(path: Path) -> str:
     try:
-        return path.read_bytes().decode("utf-8-sig", errors="replace")
+        raw = path.read_bytes()
     except OSError as exc:
         raise ConfigError(f"cannot read deny-list file ({type(exc).__name__})") from None
+    return _utf8_text(raw, "deny-list file")
 
 
 def load(repo_root: Path, environ=os.environ) -> DenyList:

@@ -63,6 +63,11 @@ RULES = [
 ]
 
 
+CI_SKIP_MARKER = re.compile(
+    r"\[(?:skip ci|ci skip|no ci|skip actions|actions skip)\]|^\s*skip-checks:\s*true\s*$", re.I
+)
+
+
 def find_generic(line: str) -> list[tuple[str, re.Match]]:
     hits = []
     for rule in RULES:

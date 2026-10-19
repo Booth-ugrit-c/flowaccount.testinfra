@@ -1,4 +1,5 @@
 import re
+import subprocess
 
 import pytest
 
@@ -186,3 +187,95 @@ def test_token_in_an_extra_commit_header_is_found(repo):
     proc = push_range(repo, base, head)
     assert proc.returncode == 1
     assert TOKEN not in combined(proc)
+
+
+def test_token_named_path_that_exists_only_in_history_is_found(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    commit(repo, {
+        "a2.txt": "", f"{TOKEN}.conf": "", "keep/.gitkeep": "", f"{TOKEN}/.gitkeep": "",
+    })
+    git(repo, "rm", "-rq", "--", f"{TOKEN}.conf", TOKEN)
+    git(repo, "commit", "-q", "-m", "test: remove")
+    head = git(repo, "rev-parse", "HEAD").stdout.strip()
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
+
+
+def test_path_with_an_embedded_newline_that_exists_only_in_history_is_found(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    blob = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=b"clean\n", capture_output=True, check=True,
+    ).stdout.decode().strip()
+    entry = f"100644 blob {blob}\tok\n{TOKEN}.txt\0".encode()
+    tree = subprocess.run(
+        ["git", "-C", str(repo), "mktree", "-z"], input=entry, capture_output=True, check=True,
+    ).stdout.decode().strip()
+    bad = git(repo, "commit-tree", tree, "-p", base, "-m", "test: odd path").stdout.strip()
+    good_tree = git(repo, "rev-parse", f"{base}^{{tree}}").stdout.strip()
+    head = git(repo, "commit-tree", good_tree, "-p", bad, "-m", "test: clean again").stdout.strip()
+    assert "\n" not in git(repo, "ls-tree", "-r", "--name-only", bad).stdout.split("\n")[0]
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
+
+
+def craft_commit(repo, base, extra_headers, message="test: crafted\n"):
+    tree = git(repo, "rev-parse", f"{base}^{{tree}}").stdout.strip()
+    stamp = "1700000000 +0000"
+    raw = (
+        f"tree {tree}\nparent {base}\nauthor Test Author <author@example.com> {stamp}\n"
+        f"committer Test Author <author@example.com> {stamp}\n{extra_headers}\n{message}"
+    )
+    path = repo / ".git" / "crafted-commit.txt"
+    path.write_text(raw, encoding="utf-8", newline="\n")
+    return git(repo, "hash-object", "-t", "commit", "-w", "--literally", str(path)).stdout.strip()
+
+
+def test_header_named_like_a_hex_only_header_is_still_scanned(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    head = craft_commit(repo, base, f"type {TOKEN}\n")
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
+
+
+def test_mergetag_continuation_line_is_still_scanned(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    mergetag = (
+        f"mergetag object {base}\n type commit\n tag side\n tagger T <author@example.com> 1 +0000\n \n"
+        f" notes\n object storage {TOKEN}\n"
+    )
+    head = craft_commit(repo, base, mergetag)
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
+
+
+def test_hex_only_headers_and_mergetag_hash_lines_are_not_findings(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    digits = "1" * 12
+    fake_hash = digits + "a" * 28
+    mergetag = f"mergetag object {fake_hash}\n type commit\n tag side\n"
+    head = craft_commit(repo, base, mergetag)
+    assert push_range(repo, base, head).returncode == 0
+
+
+@pytest.mark.parametrize("message", [
+    "chore: tidy [skip ci]", "chore: tidy [CI SKIP]", "chore: tidy [no ci]", "chore: tidy [skip actions]",
+    "chore: tidy [Actions Skip]", "chore: tidy\n\nskip-checks: true\n", "chore: tidy\n\nSkip-Checks:true\n",
+])
+def test_commit_message_with_a_ci_skip_marker_is_refused(repo, message):
+    base = commit(repo, {"a.txt": "x\n"})
+    head = commit(repo, {"b.txt": "y\n"}, message=message)
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert f"commit {head[:12]} message:" in proc.stdout
+    assert "ci-skip-marker" in proc.stdout
+
+
+@pytest.mark.parametrize("message", ["chore: skip ci politely", "chore: tidy\n\nskip-checks: false\n", "chore: [skip] [ci]"])
+def test_near_miss_ci_skip_wording_is_clean(repo, message):
+    base = commit(repo, {"a.txt": "x\n"})
+    head = commit(repo, {"b.txt": "y\n"}, message=message)
+    assert push_range(repo, base, head).returncode == 0
