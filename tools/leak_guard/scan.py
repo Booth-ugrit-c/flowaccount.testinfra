@@ -110,19 +110,20 @@ def scan_tree_names(deny: DenyList, location: str, data: bytes, oid_len: int) ->
     return findings
 
 
-def scan_new_objects(
-    root: Path, deny: DenyList, base: str, head: str, already_scanned: set[str], remote: str | None = None
-) -> tuple[int, list[str]]:
-    findings, commits = [], 0
+def scan_object_list(
+    root: Path, deny: DenyList, objects: list[tuple[str, str]], already_scanned: set[str]
+) -> tuple[int, int, list[str]]:
+    findings, commits, blobs = [], 0, 0
     proc, read = gitio.object_reader(root)
     try:
-        for oid, path in gitio.objects_in_range(root, base, head, remote):
+        for oid, path in objects:
             shown = "(unnamed)"
             if path:
                 shown, path_hits = display_path(deny, path, f"{PATH_REDACTED} (object {oid[:12]})")
                 findings += [f"{shown}:0 path matched a rule"] * path_hits
             kind, data = read(oid)
             if kind == "blob" and oid not in already_scanned:
+                blobs += 1
                 findings += scan_content(deny, f"blob {oid[:12]} {shown}", data)
             elif kind == "tree":
                 findings += scan_tree_names(deny, f"tree {oid[:12]}", data, len(oid) // 2)
@@ -133,7 +134,20 @@ def scan_new_objects(
         proc.stdin.close()
         proc.stdout.close()
         proc.wait()
-    return commits, findings
+    return commits, blobs, findings
+
+
+def scan_ref_names(deny: DenyList, names: list[str]) -> list[str]:
+    findings = []
+    for index, name in enumerate(names, 1):
+        findings += scan_content(deny, f"ref #{index}", name.encode("utf-8"), show=False)
+    return findings
+
+
+def scan_all(root: Path, deny: DenyList) -> tuple[int, int, int, list[str]]:
+    names = gitio.ref_names(root)
+    commits, blobs, findings = scan_object_list(root, deny, gitio.objects_all(root), set())
+    return commits, len(names), blobs, scan_ref_names(deny, names) + findings
 
 
 def scan_push_range(
@@ -142,5 +156,6 @@ def scan_push_range(
     if not gitio.object_exists(root, head, "tree"):
         raise ConfigError("head is not a known object")
     files, findings, scanned = scan_tree_at(root, deny, head)
-    commits, walk_findings = scan_new_objects(root, deny, base, head, scanned, remote)
+    objects = gitio.objects_in_range(root, base, head, remote)
+    commits, _, walk_findings = scan_object_list(root, deny, objects, scanned)
     return files, commits, findings + walk_findings

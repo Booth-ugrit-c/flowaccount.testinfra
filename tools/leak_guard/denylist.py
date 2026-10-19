@@ -65,10 +65,14 @@ def parse(content: str, source: str) -> DenyList:
 WIDE_BOMS = (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
 
 
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
 def _utf8_text(raw: bytes, source: str) -> str:
-    if raw.startswith(WIDE_BOMS) or b"\x00" in raw:
-        raise ConfigError(f"{source} is not UTF-8 text (UTF-16/32 byte marks or NUL bytes found)")
-    return raw.decode("utf-8-sig", errors="replace")
+    text = raw.decode("utf-8-sig", errors="replace")
+    if raw.startswith(WIDE_BOMS) or CONTROL_CHARS.search(text):
+        raise ConfigError(f"{source} is not UTF-8 text (UTF-16/32 byte marks or control characters found)")
+    return text
 
 
 def _decode_env(encoded: str) -> str:

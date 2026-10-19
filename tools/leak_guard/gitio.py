@@ -91,9 +91,22 @@ def objects_in_range(root: Path, base: str, head: str, remote: str | None = None
         raw = git(root, "rev-list", "--objects", head, "--not", known)
     else:
         raw = git(root, "rev-list", "--objects", f"{base}..{head}")
+    return parse_object_lines(raw)
+
+
+def parse_object_lines(raw: bytes) -> list[tuple[str, str]]:
     out = []
     for line in decode(raw).split("\n"):
         if line:
             oid, _, path = line.partition(" ")
             out.append((oid, path))
     return out
+
+
+def objects_all(root: Path) -> list[tuple[str, str]]:
+    return parse_object_lines(git(root, "rev-list", "--objects", "--all"))
+
+
+def ref_names(root: Path) -> list[str]:
+    raw = git(root, "for-each-ref", "--format=%(refname)%00")
+    return [decode(n).strip("\n") for n in raw.split(b"\0") if n.strip(b"\n")]
