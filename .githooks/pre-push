@@ -11,14 +11,19 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-while read -r local_ref local_sha _ remote_sha; do
+refuse() {
+    echo "leak-guard: push refused" >&2
+    exit 1
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    for ref_name in "$local_ref" "$remote_ref"; do
+        "$PY" -m tools.leak_guard ref-name "$ref_name" --require-denylist </dev/null || refuse
+    done
     case "$local_sha" in
         *[!0]*) ;;
         *) continue ;;
     esac
-    if ! "$PY" -m tools.leak_guard push-range "$remote_sha" "$local_sha" --require-denylist </dev/null; then
-        echo "leak-guard: push of $local_ref refused" >&2
-        exit 1
-    fi
+    "$PY" -m tools.leak_guard push-range "$remote_sha" "$local_sha" --require-denylist </dev/null || refuse
 done
 exit 0

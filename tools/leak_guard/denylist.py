@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import re
 from dataclasses import dataclass
@@ -60,6 +62,13 @@ def parse(content: str, source: str) -> DenyList:
     return DenyList(tuple(entries), source)
 
 
+def _decode_env(encoded: str) -> str:
+    try:
+        return base64.b64decode(encoded, validate=True).decode("utf-8-sig")
+    except (binascii.Error, UnicodeDecodeError):
+        raise ConfigError(f"{ENV_CONTENT} is not base64 of UTF-8 text") from None
+
+
 def _read(path: Path) -> str:
     try:
         return path.read_bytes().decode("utf-8-sig", errors="replace")
@@ -68,9 +77,9 @@ def _read(path: Path) -> str:
 
 
 def load(repo_root: Path, environ=os.environ) -> DenyList:
-    content = environ.get(ENV_CONTENT, "")
-    if content.strip():
-        return parse(content, "env")
+    encoded = "".join(environ.get(ENV_CONTENT, "").split())
+    if encoded:
+        return parse(_decode_env(encoded), "env")
     file_path = environ.get(ENV_FILE, "").strip()
     if file_path:
         return parse(_read(Path(file_path)), "file")

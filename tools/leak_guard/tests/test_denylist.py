@@ -2,7 +2,7 @@ import pytest
 
 from tools.leak_guard import denylist
 
-from helpers import clean_env, commit, init_repo, run_cli, write
+from helpers import b64, clean_env, commit, init_repo, run_cli, write
 
 
 def test_parse_skips_comments_blanks_and_crlf():
@@ -99,8 +99,8 @@ def test_no_source_means_empty_list_and_exit_zero_without_require(work):
 def test_empty_env_value_falls_through_to_the_next_source(work, tmp_path):
     _, repo = work
     write(tmp_path, "other.txt", "beta\n")
-    env = clean_env(LEAK_GUARD_DENYLIST_FILE=str(tmp_path / "other.txt"))
-    proc = run_cli(repo, "scan", denylist="  \n", env=env)
+    env = clean_env(LEAK_GUARD_DENYLIST_FILE=str(tmp_path / "other.txt"), LEAK_GUARD_DENYLIST="  ")
+    proc = run_cli(repo, "scan", env=env)
     assert lines_flagged(proc) == ["hit.txt:2"]
 
 
@@ -133,3 +133,27 @@ def test_invalid_regex_entry_is_exit_two_and_not_echoed(work):
     proc = run_cli(repo, "scan", denylist="re:acme-(unclosed")
     assert proc.returncode == 2
     assert "acme-(unclosed" not in proc.stdout + proc.stderr
+
+
+def test_env_deny_list_is_read_as_one_line_of_base64(work):
+    _, repo = work
+    env = clean_env(LEAK_GUARD_DENYLIST=b64("alpha\nre:gam+a\n"))
+    proc = run_cli(repo, "scan", env=env)
+    assert lines_flagged(proc) == ["hit.txt:1", "hit.txt:3"]
+    assert "deny-list 2 entries (source: env)" in proc.stdout
+
+
+def test_env_base64_tolerates_surrounding_whitespace_and_wrapping(work):
+    _, repo = work
+    encoded = b64("alpha\n")
+    env = clean_env(LEAK_GUARD_DENYLIST=f"\n{encoded[:4]}\n{encoded[4:]}\n")
+    assert lines_flagged(run_cli(repo, "scan", env=env)) == ["hit.txt:1"]
+
+
+@pytest.mark.parametrize("value", ["not base64 at all!", "alpha", "abcd", "%%%%"])
+def test_env_that_is_not_base64_text_is_exit_two_and_quotes_nothing(work, value):
+    _, repo = work
+    proc = run_cli(repo, "scan", env=clean_env(LEAK_GUARD_DENYLIST=value))
+    assert proc.returncode == 2
+    assert value not in proc.stdout + proc.stderr
+    assert "base64" in proc.stderr

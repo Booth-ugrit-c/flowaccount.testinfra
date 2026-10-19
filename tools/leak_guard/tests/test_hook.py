@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from helpers import REPO_ROOT, TOKEN, clean_env, combined, commit, git, init_repo, install_guard
+from helpers import REPO_ROOT, TOKEN, b64, clean_env, combined, commit, git, init_repo, install_guard
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def pair(tmp_path):
 
 
 def push(work, *refspec, denylist=TOKEN):
-    env = clean_env(LEAK_GUARD_DENYLIST=denylist) if denylist is not None else clean_env()
+    env = clean_env(LEAK_GUARD_DENYLIST=b64(denylist)) if denylist is not None else clean_env()
     return git(work, "push", "origin", *refspec, env=env, check=False)
 
 
@@ -75,12 +75,12 @@ def test_new_branch_carrying_a_denied_commit_is_refused(pair):
     assert remote_head(bare, "refs/heads/feature") is None
 
 
-def test_branch_deletion_is_not_scanned_and_is_accepted(pair):
+def test_deletion_of_a_cleanly_named_branch_is_accepted(pair):
     bare, work = pair
     assert push(work, "main").returncode == 0
     git(work, "branch", "doomed")
     assert push(work, "doomed").returncode == 0
-    proc = push(work, ":doomed", denylist=None)
+    proc = push(work, ":doomed")
     assert proc.returncode == 0, combined(proc)
     assert remote_head(bare, "refs/heads/doomed") is None
 
@@ -109,3 +109,31 @@ def test_hook_refuses_when_no_python_is_usable(pair, tmp_path):
 def test_hook_executable_bit_is_recorded_in_git():
     staged = git(REPO_ROOT, "ls-files", "-s", ".githooks/pre-push").stdout
     assert staged.startswith("100755 ")
+
+
+def test_push_to_a_denied_branch_name_is_refused(pair):
+    bare, work = pair
+    assert push(work, "main").returncode == 0
+    proc = push(work, f"main:refs/heads/feature-{TOKEN}")
+    assert proc.returncode != 0
+    assert remote_head(bare, f"refs/heads/feature-{TOKEN}") is None
+
+
+def test_push_of_a_denied_tag_name_is_refused(pair):
+    bare, work = pair
+    assert push(work, "main").returncode == 0
+    git(work, "tag", f"v1-{TOKEN}")
+    proc = push(work, f"refs/tags/v1-{TOKEN}")
+    assert proc.returncode != 0
+    assert remote_head(bare, f"refs/tags/v1-{TOKEN}") is None
+
+
+def test_deleting_a_denied_branch_name_is_refused(pair):
+    bare, work = pair
+    assert push(work, "main").returncode == 0
+    name = f"refs/heads/feature-{TOKEN}"
+    git(work, "push", "--no-verify", "origin", f"main:{name}")
+    assert remote_head(bare, name) is not None
+    proc = push(work, f":{name}")
+    assert proc.returncode != 0
+    assert remote_head(bare, name) is not None

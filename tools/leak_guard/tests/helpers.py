@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -65,13 +66,17 @@ def commit(repo: Path, files: dict, message: str = "test: fixture commit", autho
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def run_cli(repo: Path, *args: str, denylist: str | None = None, env: dict | None = None):
+def b64(text: str) -> str:
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def run_cli(repo: Path, *args: str, denylist: str | None = None, env: dict | None = None, input_text: str | None = None):
     full_env = env if env is not None else clean_env()
     if denylist is not None:
-        full_env = {**full_env, "LEAK_GUARD_DENYLIST": denylist}
+        full_env = {**full_env, "LEAK_GUARD_DENYLIST": b64(denylist)}
     return subprocess.run(
         [sys.executable, "-m", "tools.leak_guard", *args], cwd=repo, capture_output=True,
-        text=True, encoding="utf-8", env=full_env,
+        text=True, encoding="utf-8", env=full_env, input=input_text,
     )
 
 

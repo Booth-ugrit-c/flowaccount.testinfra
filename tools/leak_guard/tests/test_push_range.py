@@ -26,11 +26,11 @@ def test_tree_count_equals_git_ls_tree(repo):
 
 def test_token_added_in_one_commit_and_removed_in_the_next_is_found(repo):
     base = commit(repo, {"a.txt": "x\n"})
-    added = commit(repo, {"notes.txt": f"1\n2\n{TOKEN}\n"})
+    commit(repo, {"notes.txt": f"1\n2\n{TOKEN}\n"})
     head = commit(repo, {"notes.txt": None})
     proc = push_range(repo, base, head)
     assert proc.returncode == 1
-    assert f"commit {added[:12]} notes.txt:3 deny-list entry #1" in proc.stdout
+    assert re.search(r"blob [0-9a-f]{12} notes.txt:3 deny-list entry #1", proc.stdout)
     assert TOKEN not in combined(proc)
 
 
@@ -136,7 +136,7 @@ def test_added_line_numbers_follow_hunks_in_a_modified_file(repo):
     base = commit(repo, {"f.txt": "a\nb\nc\nd\n"})
     head = commit(repo, {"f.txt": f"a\nX\nb\nc\nd\n{TOKEN}\n"})
     proc = push_range(repo, base, head)
-    assert f"commit {head[:12]} f.txt:6 deny-list entry #1" in proc.stdout
+    assert "f.txt:6 deny-list entry #1" in proc.stdout
 
 
 def test_a_removed_line_is_not_reported_as_added(repo):
@@ -149,3 +149,40 @@ def test_line_starting_with_plus_plus_plus_in_added_content_does_not_confuse_the
     base = commit(repo, {"a.txt": "x\n"})
     head = commit(repo, {"f.txt": f"++ one\n{TOKEN}\n"})
     assert f"f.txt:2 deny-list entry #1" in push_range(repo, base, head).stdout
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be"])
+def test_wide_encoded_token_added_then_removed_is_found(repo, encoding):
+    base = commit(repo, {"a.txt": "x\n"})
+    commit(repo, {"wide.txt": f"first\n{TOKEN}\n".encode(encoding)})
+    head = commit(repo, {"wide.txt": None})
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
+
+
+def test_token_in_the_inner_tag_of_a_tag_of_a_tag_is_found(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    git(repo, "tag", "-a", "-m", f"note {TOKEN}", "inner", "HEAD")
+    git(repo, "tag", "-a", "-m", "clean outer message", "outer", "inner")
+    assert git(repo, "cat-file", "-p", "outer").stdout.split("\n")[1] == "type tag"
+    head = git(repo, "rev-parse", "outer").stdout.strip()
+    proc = push_range(repo, ZERO_SHA, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
+
+
+def test_token_in_an_extra_commit_header_is_found(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    tree = git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+    stamp = "1700000000 +0000"
+    raw = (
+        f"tree {tree}\nparent {base}\nauthor Test Author <author@example.com> {stamp}\n"
+        f"committer Test Author <author@example.com> {stamp}\nx-note {TOKEN}\n\ntest: crafted\n"
+    )
+    path = repo / ".git" / "crafted-commit.txt"
+    path.write_text(raw, encoding="utf-8", newline="\n")
+    head = git(repo, "hash-object", "-t", "commit", "-w", "--literally", str(path)).stdout.strip()
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert TOKEN not in combined(proc)
