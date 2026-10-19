@@ -12,7 +12,7 @@ SERVICE_TYPES = ("sql", "document", "cache", "search", "queue")
 MATCH_FIELDS = ("labels", "runner_name")
 REQUIRED_KEYS = (
     "repo", "workflows", "window", "flip", "match_field", "runners",
-    "manual_runners", "lanes", "service_patterns",
+    "manual_runners", "lanes", "service_patterns", "split_until",
 )
 
 
@@ -30,6 +30,7 @@ class Config:
     window_start: datetime
     window_end: datetime
     flip: datetime
+    split_until: datetime
     match_field: str
     runners: frozenset[str]
     manual_runners: frozenset[str]
@@ -116,7 +117,8 @@ def parse_config(raw: object) -> Config:
         raise ConfigError("config key workers: expected an integer from 1 to 16")
     return Config(
         repo=repo, workflows=_string_list(raw, "workflows"), window_start=start, window_end=end,
-        flip=parse_time(raw["flip"], "flip"), match_field=raw["match_field"], runners=runners,
+        flip=parse_time(raw["flip"], "flip"), split_until=parse_time(raw["split_until"], "split_until"),
+        match_field=raw["match_field"], runners=runners,
         manual_runners=manual, lanes=tuple(lanes), service_patterns=tuple(service_patterns), workers=workers,
     )
 

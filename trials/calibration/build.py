@@ -118,9 +118,9 @@ def build(observed: list[Observed], cfg: Config) -> Calibration:
         id_gates[gate_id] = {"run_id": run_id, "run_attempt": attempt, "run_url": entries[0][0].run_url,
                              "workflow": entries[0][0].workflow}
 
-    warnings = assign_splits(gates, [lane.name for lane in cfg.lanes])
+    warnings = assign_splits(gates, [lane.name for lane in cfg.lanes], cfg.split_until)
     today = {
-        "split_rule": {"fit": f"{FIT_NUMERATOR}/{FIT_DENOMINATOR}", "order": "gate created_at, per lane"},
+        "split_rule": split_rule(cfg.split_until),
         "window": {"start": iso(cfg.window_start), "end": iso(cfg.window_end)},
         "flip": iso(cfg.flip),
         "match_field": cfg.match_field,
@@ -130,13 +130,23 @@ def build(observed: list[Observed], cfg: Config) -> Calibration:
     return Calibration(today, {"gates": id_gates, "jobs": id_jobs}, manual, off_runner, warnings)
 
 
-def assign_splits(gates: list[dict], lanes: list[str]) -> list[str]:
+def split_rule(cutoff: datetime) -> dict:
+    return {"fit": f"{FIT_NUMERATOR}/{FIT_DENOMINATOR}", "order": "gate created_at, per lane", "until": iso(cutoff)}
+
+
+def assign_splits(gates: list[dict], lanes: list[str], cutoff: datetime) -> list[str]:
     warnings = []
+    for gate in gates:
+        gate["splits"] = {}
     for lane in lanes:
-        members = [g for g in gates if any(j["lane"] == lane for j in g["jobs"])]
+        in_lane = [g for g in gates if any(j["lane"] == lane for j in g["jobs"])]
+        for gate in in_lane:
+            if parse(gate["created_at"]) >= cutoff:
+                gate["splits"][lane] = "excluded"
+        members = [g for g in in_lane if lane not in g["splits"]]
         fit_count = len(members) * FIT_NUMERATOR // FIT_DENOMINATOR
         for index, gate in enumerate(members):
-            gate.setdefault("splits", {})[lane] = "fit" if index < fit_count else "holdout"
+            gate["splits"][lane] = "fit" if index < fit_count else "holdout"
         holdout = len(members) - fit_count
         if not members:
             warnings.append(f"WARNING: lane {lane} has no gates")

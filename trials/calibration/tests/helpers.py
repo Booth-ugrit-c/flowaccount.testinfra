@@ -21,6 +21,7 @@ def config_dict(**over) -> dict:
         "workflows": ["pipeline.yml", "nightly.yml"],
         "window": {"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z"},
         "flip": "2026-01-20T00:00:00Z",
+        "split_until": "2026-02-01T00:00:00Z",
         "match_field": "labels",
         "runners": ["lab-runner-a", "lab-runner-b"],
         "manual_runners": ["lab-runner-m"],
