@@ -43,4 +43,6 @@ Repository settings: wiki off, all actions must be pinned to a full commit SHA, 
 
 - The hook protects only clones that ran `git config core.hooksPath .githooks`. CI runs after a push is already public, so a red leak-guard run means the content is exposed: rename or rotate first, investigate second.
 - Fork pull requests get no secrets; their leak-guard run applies the generic rules only.
+- Commits GitHub writes itself (pull request test merges, merges from the web interface, web edits) never pass the hook; their author identity follows the account's email privacy setting. A scheduled full-history scan on `main` follows in phase 1.
+- Encoded content (gzip, base64 inside a file) is not decoded before scanning.
 - Public surfaces outside git (pull request and issue text) are checked by piping the text through `python -m tools.leak_guard scan-text` before posting.
