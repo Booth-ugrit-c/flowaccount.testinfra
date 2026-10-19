@@ -37,7 +37,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_HEAD_REF: ${{ github.head_ref }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
-          PUSH_SHA: ${{ github.sha }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
           PUSHED_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
@@ -63,12 +63,12 @@ jobs:
             if [ "$base" = "$zeros" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
               base=$zeros
               if [ "$PUSHED_REF" != "refs/heads/main" ] && git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
-                base=$(git merge-base refs/remotes/origin/main "$PUSH_SHA" || echo "$zeros")
+                base=$(git merge-base refs/remotes/origin/main "$PUSH_AFTER_SHA" || echo "$zeros")
               fi
               if [ "$base" = "$zeros" ]; then
                 git for-each-ref --format='delete %(refname)' refs/remotes | git update-ref --stdin
               fi
             fi
-            run python -m tools.leak_guard push-range "$base" "$PUSH_SHA" "${args[@]}"
+            run python -m tools.leak_guard push-range "$base" "$PUSH_AFTER_SHA" "${args[@]}"
           fi
           exit "$rc"
