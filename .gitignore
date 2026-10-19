@@ -13,3 +13,4 @@ trials/raw/
 *.private.*
 leak-guard-denylist*
 _testinfra-private/
+!/trials/calibration/
