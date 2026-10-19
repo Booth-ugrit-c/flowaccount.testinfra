@@ -1,0 +1,97 @@
+name: trial-gate
+
+run-name: trial ${{ inputs.trial_id }} gate ${{ inputs.gate_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      trial_id:
+        description: Trial identifier, letters digits dot dash underscore
+        required: true
+        type: string
+      gate_id:
+        description: Gate identifier within the trial
+        required: true
+        type: string
+      jobs:
+        description: JSON array of job specs, one matrix job each
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate input shape
+        env:
+          TRIAL_ID: ${{ inputs.trial_id }}
+          GATE_ID: ${{ inputs.gate_id }}
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys
+
+          safe = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+          job_id = re.compile(r"^[a-z]+-\d{3,}$")
+          errors = []
+          for key in ("TRIAL_ID", "GATE_ID"):
+              if not safe.match(os.environ[key]):
+                  errors.append(f"{key} must match {safe.pattern}")
+          try:
+              specs = json.loads(os.environ["JOBS"])
+          except ValueError as exc:
+              specs = None
+              errors.append(f"jobs is not JSON: {exc}")
+          if specs is not None:
+              if not isinstance(specs, list) or not specs:
+                  errors.append("jobs must be a non-empty JSON array")
+              elif len(specs) > 256:
+                  errors.append(f"jobs holds {len(specs)} specs, the limit is 256")
+              else:
+                  seen = set()
+                  for index, spec in enumerate(specs):
+                      name = spec.get("id") if isinstance(spec, dict) else None
+                      label = spec.get("label") if isinstance(spec, dict) else None
+                      if not isinstance(name, str) or not job_id.match(name):
+                          errors.append(f"spec {index}: id must match {job_id.pattern}")
+                      elif name in seen:
+                          errors.append(f"spec {index}: duplicate id {name}")
+                      else:
+                          seen.add(name)
+                      if not isinstance(label, str) or not safe.match(label):
+                          errors.append(f"spec {index}: label must match {safe.pattern}")
+          for line in errors:
+              print(f"::error::{line}")
+          sys.exit(1 if errors else 0)
+          PY
+
+  run:
+    name: ${{ matrix.id }}
+    needs: validate
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.jobs) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Run synthetic job
+        env:
+          JOB: ${{ toJSON(matrix) }}
+        run: python -m workload run --job-json "$JOB"
+      - name: Check for leftovers
+        if: ${{ !cancelled() }}
+        run: python -m workload leftovers
