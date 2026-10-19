@@ -25,6 +25,9 @@ HITS = {
         j("dev", "@", "corp-domain", ".io"),
         j("Dev", "@", "Corp-Domain", ".IO"),
         j("dev", "@", "notexample", ".com"),
+        j("someone", "@", "github.com"),
+        j("noreply", "@", "github.com.evil.io"),
+        j("noreply", "@", "gitlab.com"),
     ],
 }
 
@@ -40,7 +43,7 @@ NEAR_MISSES = {
     "instance-size-runner-label": ["ubuntu-latest", "4vcpu-16ram", j("ubuntu-", "4vcpu"), j("ubuntu-4", "vcpu-x", "ram")],
     "email-address": [
         "x@users.noreply.github.com", "noreply@anthropic.com", "dev@example.com", "dev@example.org",
-        "dev@host.test", "dev@sub.example.com", "git@github.com", "@main", "pkg@1.2.3", "@scope/pkg", "a@b",
+        "dev@host.test", "dev@sub.example.com", "git@github.com", j("noreply", "@", "github.com"), "@main", "pkg@1.2.3", "@scope/pkg", "a@b",
     ],
 }
 

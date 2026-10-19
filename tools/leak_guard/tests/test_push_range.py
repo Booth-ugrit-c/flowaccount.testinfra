@@ -279,3 +279,21 @@ def test_near_miss_ci_skip_wording_is_clean(repo, message):
     base = commit(repo, {"a.txt": "x\n"})
     head = commit(repo, {"b.txt": "y\n"}, message=message)
     assert push_range(repo, base, head).returncode == 0
+
+
+def test_githubs_own_committer_address_is_clean(repo):
+    base = commit(repo, {"a.txt": "x\n"})
+    head = commit(repo, {"b.txt": "y\n"}, author="Test Author <author@example.com>", committer=("GitHub", "noreply" + "@" + "github.com"))
+    assert git(repo, "log", "-1", "--format=%ce", head).stdout.strip() == "noreply" + "@" + "github.com"
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 0, proc.stdout
+
+
+@pytest.mark.parametrize("address", ["someone" + "@" + "github.com", "noreply" + "@" + "github.com.evil.io"])
+def test_near_miss_github_committer_addresses_are_still_findings(repo, address):
+    base = commit(repo, {"a.txt": "x\n"})
+    head = commit(repo, {"b.txt": "y\n"}, author="Test Author <author@example.com>", committer=("GitHub", address))
+    proc = push_range(repo, base, head)
+    assert proc.returncode == 1
+    assert f"commit {head[:12]} committer email-address" in proc.stdout
+    assert address not in combined(proc)
