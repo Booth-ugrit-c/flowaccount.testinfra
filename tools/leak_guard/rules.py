@@ -25,7 +25,7 @@ def _ipv4_allowed(m: re.Match) -> bool:
 
 
 _ALLOWED_EMAIL_DOMAINS = ("example.com", "example.org")
-_ALLOWED_EMAIL_ADDRESSES = {"noreply@anthropic.com", "git@github.com"}
+_ALLOWED_EMAIL_ADDRESSES = {"noreply@anthropic.com", "noreply@github.com", "git@github.com"}
 
 
 def _email_allowed(m: re.Match) -> bool:

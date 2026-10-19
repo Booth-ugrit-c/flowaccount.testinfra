@@ -52,7 +52,7 @@ def write(repo: Path, relative: str, content: str | bytes) -> None:
     target.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
 
 
-def commit(repo: Path, files: dict, message: str = "test: fixture commit", author: str | None = None) -> str:
+def commit(repo: Path, files: dict, message: str = "test: fixture commit", author: str | None = None, committer: tuple[str, str] | None = None) -> str:
     for relative, content in files.items():
         if content is None:
             git(repo, "rm", "-q", "-f", "--", relative)
@@ -62,7 +62,8 @@ def commit(repo: Path, files: dict, message: str = "test: fixture commit", autho
     args = ["commit", "-q", "--allow-empty", "-m", message]
     if author:
         args += ["--author", author]
-    git(repo, *args)
+    prefix = ["-c", f"user.name={committer[0]}", "-c", f"user.email={committer[1]}"] if committer else []
+    git(repo, *prefix, *args)
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
