@@ -1,0 +1,24 @@
+#!/bin/sh
+PY=
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys' >/dev/null 2>&1; then
+        PY=$candidate
+        break
+    fi
+done
+if [ -z "$PY" ]; then
+    echo "leak-guard: no working python3 or python found; push refused" >&2
+    exit 1
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_sha" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+    if ! "$PY" -m tools.leak_guard push-range "$remote_sha" "$local_sha" --require-denylist </dev/null; then
+        echo "leak-guard: push of $local_ref refused" >&2
+        exit 1
+    fi
+done
+exit 0
