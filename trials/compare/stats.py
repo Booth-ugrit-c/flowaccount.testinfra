@@ -5,8 +5,6 @@ import statistics
 from datetime import datetime
 from pathlib import Path
 
-from trials.validate.stats import replay_jobs
-
 Z_TWO_SIDED = 2.8
 METRICS = ("wall", "wait")
 
@@ -14,9 +12,11 @@ METRICS = ("wall", "wait")
 def kinds_of(window_file: Path) -> dict[str, dict]:
     out = {}
     for gate in json.loads(Path(window_file).read_text(encoding="utf-8"))["gates"]:
+        if "kind" not in gate:
+            raise ValueError(f"{Path(window_file).name}: gate {gate.get('gate')} has no kind, run annotate-events first")
         for job in gate["jobs"]:
             if job.get("duration_s") is not None:
-                out[job["id"]] = {"lane": job["lane"], "kind": gate.get("kind", "pr")}
+                out[job["id"]] = {"lane": job["lane"], "kind": gate["kind"]}
     return out
 
 
@@ -57,7 +57,7 @@ def span(collect_dir: Path) -> tuple[float, float]:
     return min(s for s, _ in stamps), max(e for _, e in stamps)
 
 
-def usage(sample_files: list[Path], start: float, end: float) -> dict[str, float]:
+def usage(sample_files: list[Path], start: float, end: float, interval: float = 1.0) -> dict[str, float]:
     busy, peak = [], 0.0
     for path in sample_files:
         rows = []
@@ -68,6 +68,9 @@ def usage(sample_files: list[Path], start: float, end: float) -> dict[str, float
                     rows.append(row)
         if not rows:
             raise ValueError(f"{path.name}: no samples between {start:.0f} and {end:.0f}")
+        edges = [start, *(float(r["epoch"]) for r in rows), end]
+        if max(b - a for a, b in zip(edges, edges[1:])) > 3 * interval:
+            raise ValueError(f"{path.name}: samples do not cover {start:.0f}-{end:.0f} within {3 * interval:g} s")
         busy.append(statistics.fmean(float(r["cpu_busy"]) for r in rows))
         peak += max(float(r["mem_used_mib"]) for r in rows)
     return {"cpu_busy_mean": statistics.fmean(busy), "mem_peak_mib": peak}
@@ -93,7 +96,7 @@ def summarize(per_design: dict[str, list[dict[str, float]]], baseline: str) -> l
                     "delta": mean - base_mean,
                     "delta_pct": (mean - base_mean) / base_mean if base_mean else math.nan,
                     "mde": mde,
-                    "detectable": abs(mean - base_mean) > mde,
+                    "detectable": None if math.isnan(mde) else abs(mean - base_mean) > mde,
                 })
             rows.append(row)
     return rows

@@ -58,6 +58,12 @@ def test_fit_factor_scales_by_real_over_replay_median():
     assert fit_factors(pairs, {"unit": 0.5}) == {"unit": 0.5 * 150 / 75}
 
 
+def test_fit_refuses_a_zero_replay_median():
+    pairs = [({"lane": "unit", "split": "fit", "duration": 100}, {"duration": 0})] * 2
+    with pytest.raises(ValueError, match="replay median duration is 0"):
+        fit_factors(pairs, {"unit": 1.0})
+
+
 def test_verdict_passes_inside_real_iqr_and_fails_outside():
     real = [10, 20, 30, 40, 50]
     inside = [({"lane": "unit", "split": "holdout", "wall": r, "wait": r}, {"wall": r, "wait": r}) for r in real]

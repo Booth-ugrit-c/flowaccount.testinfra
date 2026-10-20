@@ -64,6 +64,8 @@ def fit_factors(pairs: list[tuple[dict, dict]], factors: dict[str, float]) -> di
             raise ValueError(f"lane {lane}: fewer than two fit jobs")
         real = statistics.median(r["duration"] for r, _ in rows)
         replay = statistics.median(p["duration"] for _, p in rows)
+        if not replay:
+            raise ValueError(f"lane {lane}: replay median duration is 0")
         out[lane] = factor * real / replay
     return out
 
