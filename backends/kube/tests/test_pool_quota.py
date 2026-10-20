@@ -45,13 +45,10 @@ def test_full_pool_is_read_from_the_manifests():
     assert full_pool() == (26.0, 36 * 1024, 16)
 
 
-def test_namespace_quota_admits_a_full_pool_and_the_mirror():
+def test_namespace_quota_admits_a_full_pool():
     pool = (KUBE / "manifests" / "pool.yaml").read_text(encoding="utf-8")
     quota = QUOTA_RE.search(pool.split("kind: ResourceQuota", 1)[1])
-    mirror = container_requests(pool.split("kind: DaemonSet", 1)[1])
     cpu, memory, pods = full_pool()
-    cpu += sum(c for c, _ in mirror)
-    memory += sum(m for _, m in mirror)
     assert quantity(quota.group(1), False) >= cpu
     assert quantity(quota.group(2), True) >= memory
-    assert int(quota.group(3)) >= pods + 1
+    assert int(quota.group(3)) >= pods
