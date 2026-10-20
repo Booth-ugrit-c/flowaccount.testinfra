@@ -7,6 +7,7 @@ SAFE_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 MAX_SPECS = 256
 MAX_INPUTS_CHARS = 60000
 SPLITS = ("fit", "holdout", "all")
+KINDS = ("pr", "schedule")
 
 
 class SpecError(ValueError):
@@ -65,6 +66,9 @@ def label_for(labels: dict, lane: str, kind: str | None) -> str | None:
 
 
 def build_specs(gate: dict, labels: dict, factors: dict, threads: dict, memory: dict) -> tuple[list[dict], list[str]]:
+    kind = gate.get("kind")
+    if kind is not None and kind not in KINDS:
+        raise SpecError(f"gate {gate['gate']}: kind {kind!r} must be one of {KINDS}")
     specs, skipped, seen = [], [], set()
     for job in gate["jobs"]:
         job_id, lane = job["id"], job["lane"]
