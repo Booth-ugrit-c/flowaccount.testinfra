@@ -1,0 +1,15 @@
+minRunners: 0
+maxRunners: 4
+template:
+  spec:
+    containers:
+      - name: runner
+        image: __RUNNER_IMAGE__
+        imagePullPolicy: Never
+        command: ["/home/runner/run.sh"]
+        resources:
+          requests:
+            cpu: 1500m
+            memory: 1536Mi
+          limits:
+            memory: 1536Mi

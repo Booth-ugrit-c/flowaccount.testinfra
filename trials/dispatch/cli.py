@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay = sub.add_parser("replay", help="dispatch gates at their recorded arrival offsets")
     replay.add_argument("--calibration", required=True, type=Path)
     replay.add_argument("--split", required=True, choices=SPLITS)
-    replay.add_argument("--labels", required=True, help="lane=label,lane=label")
+    replay.add_argument("--labels", required=True, help="lane=label or lane:kind=label, comma separated")
     replay.add_argument("--factor", required=True, help="lane=cpu-seconds per recorded second")
     replay.add_argument("--threads", required=True, help="lane=threads")
     replay.add_argument("--memory", required=True, help="lane=mib")

@@ -10,7 +10,7 @@ MAX_CPU_SECONDS = 86400.0
 MAX_THREADS = 256
 MAX_MEMORY_MIB = 1048576
 
-_ID_RE = re.compile(r"^[a-z]+-\d{3,}$")
+ID_RE = re.compile(r"^[a-z]+-\d{3,}$")
 _LANE_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
@@ -47,7 +47,7 @@ def parse_spec(obj):
         raise SpecError("missing keys: " + ", ".join(missing))
 
     job_id = obj["id"]
-    if not isinstance(job_id, str) or not _ID_RE.fullmatch(job_id):
+    if not isinstance(job_id, str) or not ID_RE.fullmatch(job_id):
         raise SpecError("id must match ^[a-z]+-\\d{3,}$")
     lane = obj["lane"]
     if not isinstance(lane, str) or not _LANE_RE.fullmatch(lane):

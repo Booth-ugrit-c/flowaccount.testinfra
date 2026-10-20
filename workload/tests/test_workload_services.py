@@ -99,6 +99,30 @@ def test_leftovers_command_exit_codes(monkeypatch, capsys):
     assert cli.main(["leftovers"]) == 0
 
 
+def test_leftovers_remove_deletes_and_still_reports(monkeypatch):
+    from workload import cli
+
+    calls = []
+
+    def fake(args, timeout):
+        calls.append(args[:2])
+        return (0, "wl-trial-unit-001-sql-ab12cd34\n", "") if args[0] == "ps" else (0, "", "")
+
+    monkeypatch.setattr(services, "docker", fake)
+    assert cli.main(["leftovers", "--remove"]) == 1
+    assert calls == [["ps", "-a"], ["rm", "-f"]]
+
+
+def test_leftovers_remove_failure_is_an_error(monkeypatch):
+    from workload import cli
+
+    def fake(args, timeout):
+        return (0, "wl-trial-unit-001-sql-ab12cd34\n", "") if args[0] == "ps" else (1, "", "busy\n")
+
+    monkeypatch.setattr(services, "docker", fake)
+    assert cli.main(["leftovers", "--remove"]) == 2
+
+
 @needs_docker
 def test_real_cache_service_becomes_healthy_and_is_removed():
     proc = run_cli("run", "--job-json", json.dumps(spec(cpu_seconds=0.5, services=["cache"])))
@@ -150,3 +174,25 @@ def test_every_service_type_starts_healthy_together():
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert result_of(proc)["ok"] is True
     assert run_cli("leftovers").returncode == 0
+
+
+def test_leftovers_for_one_job_leave_another_jobs_containers_alone(monkeypatch):
+    from workload import cli
+
+    calls = []
+
+    def fake(args, timeout):
+        calls.append(args)
+        listed = "wl-trial-unit-001-sql-ab12cd34\nwl-trial-unit-0012-sql-ab12cd34\nwl-trial-unit-002-cache-ff00ff00\n"
+        return (0, listed, "") if args[0] == "ps" else (0, "", "")
+
+    monkeypatch.setattr(services, "docker", fake)
+    assert cli.main(["leftovers", "--remove", "--job", "unit-001"]) == 1
+    assert calls[0][3] == "name=^wl-trial-unit-001-"
+    assert calls[1] == ["rm", "-f", "-v", "wl-trial-unit-001-sql-ab12cd34"]
+
+
+def test_leftovers_refuses_a_job_id_that_is_not_an_id():
+    from workload import cli
+
+    assert cli.main(["leftovers", "--job", "unit-1.*"]) == 2

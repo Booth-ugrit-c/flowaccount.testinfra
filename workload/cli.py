@@ -44,13 +44,18 @@ def cmd_check(args):
 
 
 def cmd_leftovers(args):
-    try:
-        names = services.leftovers()
-    except (OSError, services.ServiceFailure) as exc:
-        print(f"cannot list containers: {exc}", file=sys.stderr)
+    if args.job is not None and not spec_mod.ID_RE.fullmatch(args.job):
+        print(f"--job must match {spec_mod.ID_RE.pattern}", file=sys.stderr)
         return EXIT_INVALID
-    for name in names:
-        print(name)
+    try:
+        names = services.leftovers(args.job)
+        for name in names:
+            print(name)
+        if args.remove:
+            services.remove(names)
+    except (OSError, services.ServiceFailure) as exc:
+        print(f"cannot list or remove containers: {exc}", file=sys.stderr)
+        return EXIT_INVALID
     return EXIT_FAILED if names else 0
 
 
@@ -66,6 +71,8 @@ def build_parser():
     check.add_argument("file")
     check.set_defaults(func=cmd_check)
     left = sub.add_parser("leftovers", help="list containers left by earlier runs")
+    left.add_argument("--remove", action="store_true", help="also remove them; the exit code still reports that they existed")
+    left.add_argument("--job", help="only containers of this job id; runners sharing a daemon must pass it")
     left.set_defaults(func=cmd_leftovers)
     return parser
 
