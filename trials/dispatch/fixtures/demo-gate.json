@@ -1,0 +1,17 @@
+{
+  "scenario": "demo",
+  "gates": [
+    {
+      "gate": "g-0001",
+      "arrival_offset_s": 0.0,
+      "split": "fit",
+      "jobs": [
+        {"id": "unit-001", "lane": "unit", "duration_s": 10.0, "queue_wait_s": 1.0, "run_attempt": 1, "conclusion": "success", "services": []},
+        {"id": "unit-002", "lane": "unit", "duration_s": 12.0, "queue_wait_s": 1.0, "run_attempt": 1, "conclusion": "success", "services": []},
+        {"id": "unit-003", "lane": "unit", "duration_s": 8.0, "queue_wait_s": 2.0, "run_attempt": 1, "conclusion": "success", "services": []},
+        {"id": "integration-001", "lane": "integration", "duration_s": 16.0, "queue_wait_s": 2.0, "run_attempt": 1, "conclusion": "success", "services": ["sql", "cache"]},
+        {"id": "integration-002", "lane": "integration", "duration_s": 20.0, "queue_wait_s": 3.0, "run_attempt": 1, "conclusion": "success", "services": ["queue"]}
+      ]
+    }
+  ]
+}
