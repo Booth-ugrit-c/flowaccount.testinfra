@@ -53,6 +53,15 @@ Every refusal exits 2 with a `compare:` line on stderr (`trials/compare/cli.py:6
 
 The same command on the same inputs gives byte-identical output. Checked on a synthetic window of three jobs in two gates, two designs, two runs each, with sample files (the fixtures of `trials/compare/tests/test_compare.py`), running the command twice and comparing both the table and the `--json` file with `filecmp.cmp(..., shallow=False)`: both identical.
 
+## Lab outcome
+
+The lab comparison ran the pre-registered round order up to a fixed cutoff, so each design got the runs that fitted, fewer than ten. Its inputs and numbers are private; the patterns it showed:
+
+- Every lab number carries the label synthetic load, not calibrated: the held-out check failed one of its lane checks, and the pre-registered refit could not run because the loader refused gates that straddle the fit/holdout cut (fixed in this phase, see below).
+- Against the as-is design, the kube design shortened job waiting, most in the tail and for scheduled work, and used CPU that the as-is design left idle while work waited. Integration jobs ran longer on it and its peak memory was higher. For pull-request gates the medians moved by less than the trial could detect.
+- One of the two complete improved runs reached the comparison, too few for a detectability verdict; on it, median job wait and median pull-request gate wall were below both as-is runs, with no integration wall loss. In the other, an integration job's workload succeeded but its service containers were still present at the leftover check, so the job failed, the collect reported the gate failed, and `trials.compare` refused the run. `ServiceSet.stop()` had swallowed the removal error; it is now written to the job log. Why the removal failed is not established.
+- The kube node runs at most four runner pods at once, whatever the namespace quota admits ([ADR 0003](../adr/0003-three-designs-on-one-budget.md)).
+
 ## Changes in this phase
 
 | Change | Red first |
