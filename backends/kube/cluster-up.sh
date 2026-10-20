@@ -2,7 +2,7 @@
 # Runs as root on the server node from /tmp/ti-kube; reads the GitHub token for ARC from stdin.
 set -eu
 
-repo=${1:?owner/repo}; nodes=${2:-2}
+repo=${1:?owner/repo}; nodes=${2:-1}
 here=/tmp/ti-kube
 . "$here/versions.env"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml

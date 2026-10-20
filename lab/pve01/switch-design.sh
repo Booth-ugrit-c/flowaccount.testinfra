@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Usage (root on the Proxmox host): switch-design.sh <design|none> <design>=<vmid>,<vmid> [...]
-# Stops every listed VM outside the chosen design, then starts the chosen design's VMs.
 set -euo pipefail
 
 want=${1:?design or none}; shift

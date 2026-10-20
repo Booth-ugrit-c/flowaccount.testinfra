@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Usage: up.sh <owner/repo> <ssh-config> <services|none> <ssh-host>=<base> [...]
-# Each host gets runners <base>-1 (label <base>) and <base>-2 (labels <base>,<base>-sched).
 set -euo pipefail
 
 repo=${1:?repo}; ssh_config=${2:?ssh config}; services=${3:?services or none}; shift 3

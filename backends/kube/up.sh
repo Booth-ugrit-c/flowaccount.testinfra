@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Usage: up.sh <owner/repo> <ssh-config> <services|none> <server-host> [<agent-host>...]
-# The ARC token comes from GH_TOKEN and lands only in a Kubernetes secret on the server node.
 set -euo pipefail
 
 repo=${1:?repo}; ssh_config=${2:?ssh config}; services=${3:?services or none}; server=${4:?server host}; shift 4

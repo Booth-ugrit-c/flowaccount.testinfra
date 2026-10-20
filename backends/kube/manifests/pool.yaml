@@ -21,7 +21,6 @@ kind: Namespace
 metadata:
   name: ti-runners
 ---
-# Above the pool: a quota equal to the pool refuses pods instead of leaving them Pending.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
