@@ -12,6 +12,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.leak_guard")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("scan")
+    sub.add_parser("scan-all").add_argument("--refs", action="append", metavar="PREFIX")
     push = sub.add_parser("push-range")
     push.add_argument("base")
     push.add_argument("head")
@@ -31,7 +32,7 @@ def _root() -> Path:
 
 
 def _run(args: argparse.Namespace) -> int:
-    needs_repo = args.command in ("scan", "push-range")
+    needs_repo = args.command in ("scan", "scan-all", "push-range")
     root = gitio.repo_root(Path.cwd()) if needs_repo else _root()
     deny = denylist.load(root)
     print(f"leak-guard: deny-list {len(deny.entries)} entries (source: {deny.source})")
@@ -40,6 +41,10 @@ def _run(args: argparse.Namespace) -> int:
     if args.command == "scan":
         summary, findings = scan.scan_working_tree(root, deny)
         summary = f"{summary} files"
+    elif args.command == "scan-all":
+        commits, refs, blobs, findings = scan.scan_all(root, deny, args.refs)
+        print(f"leak-guard: scan-all {commits} commits, {refs} refs")
+        summary = f"{blobs} files"
     elif args.command == "push-range":
         files, commits, findings = scan.scan_push_range(
             root, deny, args.base, args.head, args.remote

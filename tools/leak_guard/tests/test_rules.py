@@ -6,12 +6,24 @@ from tools.leak_guard.scan import check_line
 from helpers import TOKEN, j
 
 
+RUN = j("1234", "5678", "9012")
+
+
 def ip(*octets):
     return ".".join(str(o) for o in octets)
 
 
 HITS = {
-    "twelve-digit-id": [j("1234", "5678", "9012"), "id=" + j("0000", "0000", "0001") + ";"],
+    "twelve-digit-id": [
+        j("1234", "5678", "9012"),
+        "id=" + j("0000", "0000", "0001") + ";",
+        j("arn:aws:iam::", RUN, ":role/x"),
+        j("id: ", RUN),
+        j("deadbeef ", RUN),
+        j(RUN, " cafe"),
+        j("a" * 10, RUN, "b" * 9),
+        j("a" * 5, RUN, " ", "b" * 40),
+    ],
     "ipv4-address": [ip(10, 20, 30, 40), ip(172, 16, 5, 9), ip(192, 168, 1, 10), ip(8, 8, 8, 8), ip(255, 255, 255, 255)],
     "private-key-header": [
         j("-----BEGIN ", "RSA PRIVATE KEY-----"),
@@ -32,7 +44,16 @@ HITS = {
 }
 
 NEAR_MISSES = {
-    "twelve-digit-id": ["1" * 11, "1" * 13, "no digits here"],
+    "twelve-digit-id": [
+        "1" * 11, "1" * 13, "no digits here",
+        j("a" * 20, RUN, "b" * 32),
+        j("sha256:", "a" * 20, RUN, "b" * 32),
+        j("a" * 10, RUN, "b" * 18),
+        j("A" * 10, RUN, "B" * 18),
+        j(RUN, "a" * 20),
+        j("a" * 20, RUN),
+        j("pin@", "c" * 6, RUN, "d" * 22, " # v1.2.3"),
+    ],
     "ipv4-address": [
         ip(127, 0, 0, 1), ip(127, 255, 255, 254), ip(0, 0, 0, 0), ip(192, 0, 2, 5), ip(198, 51, 100, 7),
         ip(203, 0, 113, 9), ip(256, 1, 1, 1), ip(1, 2, 3), ip(1, 2, 3, 4, 5), ip(999, 999, 999, 999),
