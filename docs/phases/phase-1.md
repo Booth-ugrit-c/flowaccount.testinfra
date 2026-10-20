@@ -14,7 +14,7 @@
 
 | Check | Result |
 |---|---|
-| Test suite | all pass; Linux-only and large-image tests run in CI or behind `WORKLOAD_DOCKER_FULL=1` |
+| Test suite | all pass locally on Windows; Linux-only tests ran under WSL and run on the pull request's Linux CI; large-image tests run behind `WORKLOAD_DOCKER_FULL=1` |
 | Live gate, 5 jobs on hosted runners | [run 39240976321](https://github.com/Booth-ugrit-c/flowaccount.testinfra/actions/runs/39240976321): 5 of 5 jobs collected, integration jobs started sql, cache and queue containers, measured CPU-seconds within 0.1% of requested |
 | Generator on hosted runners, 10 jobs of 30 CPU-seconds | [run 39241136749](https://github.com/Booth-ugrit-c/flowaccount.testinfra/actions/runs/39241136749): measured CPU-seconds median 30.006, worst error 0.043%; wall time coefficient of variation 1.31% |
 | Run id discovery | taken from the dispatch response |
