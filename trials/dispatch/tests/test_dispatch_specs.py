@@ -104,3 +104,9 @@ def test_load_calibration_rejects_empty_and_bad_split(tmp_path):
     path.write_text(json.dumps({"gates": [gate([], split="train")]}), encoding="utf-8")
     with pytest.raises(SpecError, match="split"):
         load_calibration(path)
+
+
+def test_an_unknown_gate_kind_is_refused_instead_of_falling_to_the_lane_label():
+    weekly = {**gate([job("unit-001", "unit", 1.0)]), "kind": "weekly"}
+    with pytest.raises(SpecError, match="kind 'weekly'.*pr.*schedule"):
+        build_specs(weekly, {"unit": "pool-unit"}, FACTORS, THREADS, MEMORY)

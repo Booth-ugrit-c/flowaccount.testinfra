@@ -22,8 +22,10 @@ def test_workflow_has_no_concurrency_group_and_no_secrets():
     assert "permissions:\n  contents: read" in text
 
 
-def test_matrix_job_does_not_wait_on_another_job():
+def test_matrix_job_waits_only_on_input_validation():
     text = WORKFLOW.read_text(encoding="utf-8")
-    matrix_block = text.split("\n  run:\n", 1)[1]
+    validate_block, matrix_block = text.split("\n  run:\n", 1)
     assert "fromJSON(inputs.jobs)" in matrix_block
-    assert "needs:" not in text
+    assert "needs:" not in validate_block
+    assert matrix_block.split("    steps:", 1)[0].count("    needs: validate\n") == 1
+    assert text.count("needs:") == 1
