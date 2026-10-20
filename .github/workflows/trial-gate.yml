@@ -72,6 +72,7 @@ jobs:
 
   run:
     name: ${{ matrix.id }}
+    needs: validate
     runs-on: ${{ matrix.label }}
     timeout-minutes: 90
     strategy:
