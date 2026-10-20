@@ -24,7 +24,7 @@ Calibration, before any comparison:
 
 Comparison (`python -m trials.compare`):
 - All designs replay the same window, in interleaved rounds so drift in the lab host is spread across designs rather than landing on one.
-- Per run: wait and wall median and 90th percentile by lane, by gate kind and overall; host CPU busy fraction and peak memory from 1-second `/proc` samplers on every runner host, cut to the run's span. A run whose samples leave a gap longer than three sampling intervals in its span, or a set of runs with different numbers of host sample files, is refused rather than summarized.
+- Per run: wait and wall median and 90th percentile by lane, by gate kind and overall; host CPU busy fraction and the sum of each host's peak memory (not one simultaneous peak) from 1-second `/proc` samplers on every runner host, cut to the run's span. A run whose samples leave a gap longer than three sampling intervals in its span, or a set of runs with different numbers of host sample files, is refused rather than summarized.
 - Per design: mean, standard deviation and coefficient of variation of the per-run values; delta against the baseline design; minimum detectable effect `2.8 x sqrt(sdA^2/nA + sdB^2/nB)` (two-sided, alpha 0.05, power 0.8, normal approximation: it understates the effect the trial can resolve when n is small).
 - A delta smaller than the minimum detectable effect is reported as "not detectable", never as "no difference".
 

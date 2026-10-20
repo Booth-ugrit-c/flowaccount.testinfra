@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from trials.compare.cli import main, render
-from trials.compare.stats import kinds_of, run_metrics, summarize, usage
+from trials.compare.stats import kinds_of, run_metrics, span, summarize, usage
 
 BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -175,3 +175,7 @@ def test_a_single_run_or_zero_baseline_prints_no_verdict():
     rows = summarize({"asis": [{"k": 0.0}, {"k": 0.0}], "kube": [{"k": 5.0}]}, "asis")
     assert next(r for r in rows if r["design"] == "kube")["detectable"] is None
     assert "| k | kube | 1 | 5.0 | n/a | n/a | 5.0 (n/a) | n/a | n/a |" in render(rows, "asis")
+
+
+def test_span_runs_from_the_first_created_to_the_last_completed_job(tmp_path):
+    assert span(collect_dir(tmp_path, "s", HOST_TIMINGS)) == (BASE.timestamp(), BASE.timestamp() + 90)
