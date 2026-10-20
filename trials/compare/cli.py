@@ -4,7 +4,7 @@ import math
 import sys
 from pathlib import Path
 
-from trials.compare.stats import kinds_of, run_metrics, span, summarize, usage
+from trials.compare.stats import gate_metrics, idle_while_waiting, kinds_of, run_metrics, span, summarize, usage, waiting_set
 from trials.validate.stats import replay_jobs
 
 
@@ -49,10 +49,13 @@ def main(argv: list[str] | None = None) -> int:
         runs, hosts = [], {}
         for design, directory in args.run:
             metrics = run_metrics(jobs, replay_jobs([directory], args.compress))
+            metrics.update(gate_metrics(directory, jobs, args.compress))
             samples = sorted(directory.parent.glob(f"{directory.name}-samples-*.csv"))
             hosts.setdefault(design, set()).add(len(samples))
             if samples:
-                metrics.update({f"host/{k}": v for k, v in usage(samples, *span(directory)).items()})
+                start, end = span(directory)
+                host = {**usage(samples, start, end), **idle_while_waiting(samples, waiting_set(directory), start, end, args.compress)}
+                metrics.update({f"host/{k}": v for k, v in host.items()})
             per_design.setdefault(design, []).append(metrics)
             runs.append({"design": design, "run": directory.name, "metrics": metrics})
         counts = set().union(*hosts.values())
