@@ -40,8 +40,8 @@ def load_calibration(path: Path) -> dict:
         for key in ("gate", "arrival_offset_s", "split", "jobs"):
             if key not in gate:
                 raise SpecError(f"calibration gate missing {key!r}: {gate!r:.80}")
-        if gate["split"] not in ("fit", "holdout"):
-            raise SpecError(f"gate {gate['gate']}: split must be fit or holdout")
+        if gate["split"] not in ("fit", "holdout", "mixed"):
+            raise SpecError(f"gate {gate['gate']}: split must be fit, holdout or mixed")
         if not SAFE_RE.match(str(gate["gate"])):
             raise SpecError(f"gate id {gate['gate']!r} must match {SAFE_RE.pattern}")
     return data

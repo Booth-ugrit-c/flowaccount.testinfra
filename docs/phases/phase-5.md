@@ -4,6 +4,8 @@
 
 The three designs of [ADR 0003](../adr/0003-three-designs-on-one-budget.md) replay the same window of gates and are compared on the same metrics, on replays that passed the validation of [ADR 0002](../adr/0002-replay-validation-and-comparison.md). The calibrated comparison uses private recorded history; its inputs and numbers stay outside this repository. The repository holds the tooling and the synthetic evidence that it behaves.
 
+There are no phase 3 and 4 documents: the improved and kube designs were built in [phase 2](phase-2.md).
+
 ## Metrics
 
 `python -m trials.compare --window W --compress C --baseline D --run design=collect-dir ...` prints one table row per metric and design; `--json` also writes every per-run value at full precision. Wait and wall values are seconds scaled back by `--compress`. The table prints values below 10 with three decimals and larger ones with one (`trials/compare/cli.py:18`).
@@ -59,6 +61,7 @@ The same command on the same inputs gives byte-identical output. Checked on a sy
 | the trial gate matrix job needs input validation | the test found no `needs: validate` on the matrix job |
 | the kube namespace quota is 32 CPU, 48 GiB, 24 pods, above a full pool | the quota test failed with `assert 16 >= 26.0` |
 | fractional metrics print with three decimals | `0.12345` printed as `0.1` |
+| a gate whose lanes straddle the fit/holdout cut (`mixed`, `trials/calibration/build.py:157`) loads; selecting fit or holdout still leaves it out | the test failed with `SpecError: gate g-0002: split must be fit or holdout` |
 
 ## Known limits
 
