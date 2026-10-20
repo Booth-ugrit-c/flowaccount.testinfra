@@ -99,6 +99,30 @@ def test_leftovers_command_exit_codes(monkeypatch, capsys):
     assert cli.main(["leftovers"]) == 0
 
 
+def test_leftovers_remove_deletes_and_still_reports(monkeypatch):
+    from workload import cli
+
+    calls = []
+
+    def fake(args, timeout):
+        calls.append(args[:2])
+        return (0, "wl-trial-unit-001-sql-ab12cd34\n", "") if args[0] == "ps" else (0, "", "")
+
+    monkeypatch.setattr(services, "docker", fake)
+    assert cli.main(["leftovers", "--remove"]) == 1
+    assert calls == [["ps", "-a"], ["rm", "-f"]]
+
+
+def test_leftovers_remove_failure_is_an_error(monkeypatch):
+    from workload import cli
+
+    def fake(args, timeout):
+        return (0, "wl-trial-unit-001-sql-ab12cd34\n", "") if args[0] == "ps" else (1, "", "busy\n")
+
+    monkeypatch.setattr(services, "docker", fake)
+    assert cli.main(["leftovers", "--remove"]) == 2
+
+
 @needs_docker
 def test_real_cache_service_becomes_healthy_and_is_removed():
     proc = run_cli("run", "--job-json", json.dumps(spec(cpu_seconds=0.5, services=["cache"])))

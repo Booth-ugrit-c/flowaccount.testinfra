@@ -84,13 +84,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python
+        if: ${{ runner.environment == 'github-hosted' }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Check the interpreter
+        run: python3 -c 'import sys; print(sys.version); sys.exit(sys.version_info < (3, 12))'
       - name: Run synthetic job
         env:
           JOB: ${{ toJSON(matrix) }}
-        run: python -m workload run --job-json "$JOB"
-      - name: Check for leftovers
-        if: ${{ !cancelled() }}
-        run: python -m workload leftovers
+        run: python3 -m workload run --job-json "$JOB"
+      - name: Remove and report leftovers
+        if: ${{ always() }}
+        run: python3 -m workload leftovers --remove

@@ -46,11 +46,13 @@ def cmd_check(args):
 def cmd_leftovers(args):
     try:
         names = services.leftovers()
+        for name in names:
+            print(name)
+        if args.remove:
+            services.remove(names)
     except (OSError, services.ServiceFailure) as exc:
-        print(f"cannot list containers: {exc}", file=sys.stderr)
+        print(f"cannot list or remove containers: {exc}", file=sys.stderr)
         return EXIT_INVALID
-    for name in names:
-        print(name)
     return EXIT_FAILED if names else 0
 
 
@@ -66,6 +68,7 @@ def build_parser():
     check.add_argument("file")
     check.set_defaults(func=cmd_check)
     left = sub.add_parser("leftovers", help="list containers left by earlier runs")
+    left.add_argument("--remove", action="store_true", help="also remove them; the exit code still reports that they existed")
     left.set_defaults(func=cmd_leftovers)
     return parser
 

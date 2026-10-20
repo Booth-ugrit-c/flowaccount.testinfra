@@ -159,3 +159,11 @@ def leftovers():
     if code != 0:
         raise ServiceFailure(f"docker ps failed: {_first_line(err)}")
     return [line for line in out.split() if line.startswith(NAME_PREFIX)]
+
+
+def remove(names):
+    if not names:
+        return
+    code, _, err = docker(["rm", "-f", "-v", *names], 120)
+    if code != 0:
+        raise ServiceFailure(f"docker rm failed: {_first_line(err)}")
