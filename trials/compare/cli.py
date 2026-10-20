@@ -25,11 +25,12 @@ def render(rows: list[dict], baseline: str) -> str:
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
-        delta = "" if "delta" not in r else f"{_fmt(r['delta'])} ({r['delta_pct'] * 100:+.1f}%)"
+        pct = "n/a" if math.isnan(r.get("delta_pct", 0.0)) else f"{r.get('delta_pct', 0.0) * 100:+.1f}%"
+        delta = "" if "delta" not in r else f"{_fmt(r['delta'])} ({pct})"
         lines.append(
             f"| {r['key']} | {r['design']} | {r['n']} | {_fmt(r['mean'])} | {_fmt(r['sd'])} | "
             f"{'n/a' if math.isnan(r['cv']) else f'{r['cv'] * 100:.1f}%'} | {delta} | "
-            f"{_fmt(r.get('mde')) if 'mde' in r else ''} | {'' if 'detectable' not in r else ('yes' if r['detectable'] else 'no')} |"
+            f"{_fmt(r.get('mde')) if 'mde' in r else ''} | {'' if 'detectable' not in r else {True: 'yes', False: 'no', None: 'n/a'}[r['detectable']]} |"
         )
     return "\n".join(lines)
 
@@ -45,14 +46,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         jobs = kinds_of(args.window)
         per_design: dict[str, list[dict]] = {}
-        runs = []
+        runs, hosts = [], {}
         for design, directory in args.run:
             metrics = run_metrics(jobs, replay_jobs([directory], args.compress))
             samples = sorted(directory.parent.glob(f"{directory.name}-samples-*.csv"))
+            hosts.setdefault(design, set()).add(len(samples))
             if samples:
                 metrics.update({f"host/{k}": v for k, v in usage(samples, *span(directory)).items()})
             per_design.setdefault(design, []).append(metrics)
             runs.append({"design": design, "run": directory.name, "metrics": metrics})
+        counts = set().union(*hosts.values())
+        if any(len(c) > 1 for c in hosts.values()) or (0 in counts and len(counts) > 1):
+            raise ValueError(f"sample files per run differ: {dict(sorted((d, sorted(c)) for d, c in hosts.items()))}")
         rows = summarize(per_design, args.baseline)
     except (OSError, ValueError, KeyError) as exc:
         print(f"compare: {exc}", file=sys.stderr)

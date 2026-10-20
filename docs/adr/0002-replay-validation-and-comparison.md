@@ -17,20 +17,20 @@ Windows:
 - Each gate keeps its kind (`pr` or `schedule`) so a design can route the two differently; a gate is `schedule` when it was triggered by a schedule or ran on the default branch.
 
 Calibration, before any comparison:
-- Fit: per lane, `new factor = old factor x real median duration / replay median duration` over fit-split windows (`python -m trials.validate fit`).
-- Holdout verdict: on windows not used for the fit, per lane and for both wall time and wait time, the replay median (multiplied back by `k`) must fall inside the real interquartile range (`python -m trials.validate verdict`).
+- Fit: per lane, `new factor = old factor x real median duration / replay median duration` over fit-split jobs (`python -m trials.validate fit`).
+- Holdout verdict: on holdout-split jobs, per lane and for both wall time and wait time, the replay median (multiplied back by `k`) must fall inside the real interquartile range (`python -m trials.validate verdict`).
 - Red check: the same verdict must fail on a replay deliberately mis-scaled by 2. A verdict that cannot fail is not a verdict.
-- The order of fit, holdout, refit and the cut-off for the comparison is written down before the first holdout result is seen. One refit on more windows is allowed; a second holdout failure labels every comparison number "synthetic load, not calibrated".
+- The order of fit, holdout, refit and the cut-off for the comparison is written down before the first holdout result is seen. One refit on more windows is allowed; a second holdout failure labels every comparison result "synthetic load, not calibrated" in the report that publishes it.
 
 Comparison (`python -m trials.compare`):
 - All designs replay the same window, in interleaved rounds so drift in the lab host is spread across designs rather than landing on one.
-- Per run: wait and wall median and 90th percentile by lane, by gate kind and overall; host CPU busy fraction and peak memory from 1-second `/proc` samplers on every runner host, cut to the run's span.
-- Per design: mean, standard deviation and coefficient of variation of the per-run values; delta against the baseline design; minimum detectable effect `2.8 x sqrt(sdA^2/nA + sdB^2/nB)` (two-sided, alpha 0.05, power 0.8).
+- Per run: wait and wall median and 90th percentile by lane, by gate kind and overall; host CPU busy fraction and peak memory from 1-second `/proc` samplers on every runner host, cut to the run's span. A run whose samples leave a gap longer than three sampling intervals in its span, or a set of runs with different numbers of host sample files, is refused rather than summarized.
+- Per design: mean, standard deviation and coefficient of variation of the per-run values; delta against the baseline design; minimum detectable effect `2.8 x sqrt(sdA^2/nA + sdB^2/nB)` (two-sided, alpha 0.05, power 0.8, normal approximation: it understates the effect the trial can resolve when n is small).
 - A delta smaller than the minimum detectable effect is reported as "not detectable", never as "no difference".
 
 ## Consequences
 
 - Real job data never enters the repository; the tools take paths and print aggregates.
-- Every comparison number carries the holdout verdict it rests on.
+- `trials.compare` prints numbers only; the report that publishes them states the holdout verdict they rest on, next to the table.
 - With few runs per design the minimum detectable effect is wide; it is printed next to every delta so a reader can see which differences the trial could and could not resolve.
 - Compression keeps the ratio of offered work to capacity only as far as the fitted factors hold; the holdout verdict is the check on that, not an assumption.

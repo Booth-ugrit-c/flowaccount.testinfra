@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from trials.compare.cli import main
-from trials.compare.stats import run_metrics, summarize, usage
+from trials.compare.cli import main, render
+from trials.compare.stats import kinds_of, run_metrics, summarize, usage
 
 BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -56,6 +56,8 @@ def test_run_metrics_groups_by_lane_kind_and_all():
     assert m["schedule/wait/median"] == 90.0
     assert m["pr/wall/median"] == 115.0
     assert m["integration/wall/p90"] == 390.0
+    assert m["pr/wall/p90"] == 119.0
+    assert m["all/wall/p90"] == 336.0
 
 
 def test_run_metrics_refuses_a_missing_job():
@@ -96,3 +98,80 @@ def test_cli_compares_designs_from_collect_dirs(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "| unit/wait/median | asis | 2 | 81.0 | 1.4 |" in out
     assert "| unit/wait/median | kube | 2 | 11.0 | 1.4 | 12.9% | -70.0 (-86.4%) | 4.0 | yes |" in out
+
+
+def test_a_window_without_gate_kinds_is_refused(tmp_path):
+    path = tmp_path / "w.json"
+    path.write_text(json.dumps({"gates": [{"gate": "g-0001", "jobs": [{"id": "unit-001", "lane": "unit", "duration_s": 1.0}]}]}))
+    with pytest.raises(ValueError, match="no kind"):
+        kinds_of(path)
+
+
+def samples_csv(path, inside):
+    lines = ["epoch,cpu_busy,mem_used_mib,mem_total_mib"]
+    for t in range(-10, 101):
+        cpu, mem = (inside(t) if 0 <= t <= 90 else (1.0, 900))
+        lines.append(f"{BASE.timestamp() + t},{cpu},{mem},1000")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_usage_refuses_samples_that_miss_part_of_the_run(tmp_path):
+    path = tmp_path / "s.csv"
+    path.write_text("epoch,cpu_busy,mem_used_mib,mem_total_mib\n" + "".join(f"{t},0.5,100,1000\n" for t in (2, 3)))
+    with pytest.raises(ValueError, match="cover"):
+        usage([path], 0.0, 10.0)
+
+
+def test_usage_refuses_a_hole_inside_the_run(tmp_path):
+    path = tmp_path / "s.csv"
+    path.write_text("epoch,cpu_busy,mem_used_mib,mem_total_mib\n" + "".join(f"{t},0.5,100,1000\n" for t in (0, 1, 2, 3, 8, 9, 10)))
+    with pytest.raises(ValueError, match="cover"):
+        usage([path], 0.0, 10.0)
+
+
+HOST_TIMINGS = {"unit-001": (0, 5, 20), "unit-002": (10, 15, 40), "integration-001": (30, 35, 90)}
+
+
+def host_run(tmp_path, name, hosts, cpu):
+    directory = collect_dir(tmp_path, name, HOST_TIMINGS)
+    for host in hosts:
+        samples_csv(tmp_path / f"{name}-samples-{host}.csv", lambda t: (cpu, 300 if t == 10 else 100))
+    return directory
+
+
+def test_cli_reports_host_usage_cut_to_each_run(tmp_path, capsys):
+    w = window(tmp_path)
+    argv = ["--window", str(w), "--compress", "4", "--baseline", "asis", "--json", str(tmp_path / "c.json")]
+    for n in range(2):
+        argv += ["--run", f"asis={host_run(tmp_path, f'a{n}', ['vm1', 'vm2'], 0.5)}"]
+        argv += ["--run", f"kube={host_run(tmp_path, f'k{n}', ['node'], 0.25)}"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "| host/mem_peak_mib | asis | 2 | 600.0 | 0.0 | 0.0% |" in out
+    assert "| host/mem_peak_mib | kube | 2 | 300.0 | 0.0 | 0.0% | -300.0 (-50.0%) | 0.0 | yes |" in out
+    runs = json.loads((tmp_path / "c.json").read_text())["runs"]
+    assert [r["metrics"]["host/cpu_busy_mean"] for r in runs] == [0.5, 0.25, 0.5, 0.25]
+
+
+def test_cli_refuses_runs_with_different_host_counts(tmp_path, capsys):
+    w = window(tmp_path)
+    argv = ["--window", str(w), "--compress", "4", "--baseline", "asis",
+            "--run", f"asis={host_run(tmp_path, 'a0', ['vm1', 'vm2'], 0.5)}",
+            "--run", f"asis={host_run(tmp_path, 'a1', ['vm1'], 0.5)}"]
+    assert main(argv) == 2
+    assert "sample files" in capsys.readouterr().err
+
+
+def test_cli_refuses_a_design_without_samples_when_others_have_them(tmp_path, capsys):
+    w = window(tmp_path)
+    argv = ["--window", str(w), "--compress", "4", "--baseline", "asis",
+            "--run", f"asis={host_run(tmp_path, 'a0', ['vm1'], 0.5)}",
+            "--run", f"kube={collect_dir(tmp_path, 'k0', HOST_TIMINGS)}"]
+    assert main(argv) == 2
+    assert "sample files" in capsys.readouterr().err
+
+
+def test_a_single_run_or_zero_baseline_prints_no_verdict():
+    rows = summarize({"asis": [{"k": 0.0}, {"k": 0.0}], "kube": [{"k": 5.0}]}, "asis")
+    assert next(r for r in rows if r["design"] == "kube")["detectable"] is None
+    assert "| k | kube | 1 | 5.0 | n/a | n/a | 5.0 (n/a) | n/a | n/a |" in render(rows, "asis")
