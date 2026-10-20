@@ -4,12 +4,14 @@ import argparse
 import json
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 
 from .build import assign_splits, build, split_rule
 from .collect import collect
 from .config import Config, load_config
 from .errors import CalibrationError, DataError, ZeroMatchError
+from .events import annotate, gate_runs, run_events
 from .ghapi import GhClient
 from .summary import render
 
@@ -52,6 +54,24 @@ def resplit(config_path: Path, source: Path, out: Path) -> str:
     return render(today, [lane.name for lane in cfg.lanes], warnings)
 
 
+def annotate_events(config_path: Path, source: Path, id_map_path: Path, out: Path, client: GhClient | None = None) -> str:
+    cfg = load_config(config_path)
+    try:
+        today = json.loads(Path(source).read_text(encoding="utf-8"))
+        id_map = json.loads(Path(id_map_path).read_text(encoding="utf-8"))
+        gates = today["gates"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise DataError("calibration or id map file is missing or malformed") from None
+    check_lanes(today, cfg)
+    runs = gate_runs(today, id_map)
+    client = client or GhClient()
+    default_branch = client.get(f"repos/{cfg.repo}")["default_branch"]
+    events = annotate(today, runs, run_events(client, cfg, set(runs.values())), default_branch)
+    write_all(out, {"today.json": today})
+    kinds = Counter(gate["kind"] for gate in gates)
+    return f"events: {json.dumps(dict(sorted(events.items())))}\nkinds: {json.dumps(dict(sorted(kinds.items())))}"
+
+
 def check_lanes(today: dict, cfg: Config) -> None:
     known = {lane.name for lane in cfg.lanes}
     if not today["gates"]:
@@ -72,12 +92,19 @@ def main(argv: list[str] | None = None) -> int:
     res.add_argument("--config", required=True, type=Path)
     res.add_argument("--in", dest="source", required=True, type=Path)
     res.add_argument("--out", required=True, type=Path)
+    ann = sub.add_parser("annotate-events")
+    ann.add_argument("--config", required=True, type=Path)
+    ann.add_argument("--in", dest="source", required=True, type=Path)
+    ann.add_argument("--id-map", required=True, type=Path)
+    ann.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "extract":
             print(extract(args.config, args.out))
-        else:
+        elif args.command == "resplit":
             print(resplit(args.config, args.source, args.out))
+        else:
+            print(annotate_events(args.config, args.source, args.id_map, args.out))
     except CalibrationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code
