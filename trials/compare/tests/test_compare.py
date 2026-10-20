@@ -299,9 +299,9 @@ def test_fractions_print_with_three_decimals_and_json_keeps_full_precision(tmp_p
     w = window(tmp_path)
     argv = ["--window", str(w), "--compress", "4", "--baseline", "asis", "--json", str(tmp_path / "c.json")]
     for n in range(2):
-        argv += ["--run", f"asis={host_run(tmp_path, f'a{n}', ['vm1'], 0.16374)}"]
-        argv += ["--run", f"kube={host_run(tmp_path, f'k{n}', ['node'], 0.16374)}"]
+        argv += ["--run", f"asis={host_run(tmp_path, f'a{n}', ['vm1'], 0.12345)}"]
+        argv += ["--run", f"kube={host_run(tmp_path, f'k{n}', ['node'], 0.12345)}"]
     assert main(argv) == 0
-    assert "| host/cpu_busy_mean | asis | 2 | 0.164 | 0.000 |" in capsys.readouterr().out
+    assert "| host/cpu_busy_mean | asis | 2 | 0.123 | 0.000 |" in capsys.readouterr().out
     runs = json.loads((tmp_path / "c.json").read_text())["runs"]
-    assert runs[0]["metrics"]["host/cpu_busy_mean"] == pytest.approx(0.16374)
+    assert runs[0]["metrics"]["host/cpu_busy_mean"] == pytest.approx(0.12345)
