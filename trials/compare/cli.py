@@ -16,7 +16,9 @@ def _run(text: str) -> tuple[str, Path]:
 
 
 def _fmt(value: float) -> str:
-    return "n/a" if value is None or (isinstance(value, float) and math.isnan(value)) else f"{value:.1f}"
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "n/a"
+    return f"{value:.3f}" if abs(value) < 10 else f"{value:.1f}"
 
 
 def render(rows: list[dict], baseline: str) -> str:

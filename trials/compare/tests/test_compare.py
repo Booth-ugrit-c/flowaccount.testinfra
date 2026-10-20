@@ -99,8 +99,8 @@ def test_cli_compares_designs_from_collect_dirs(tmp_path, capsys):
         argv += ["--run", f"kube={d}"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "| unit/wait/median | asis | 2 | 81.0 | 1.4 |" in out
-    assert "| unit/wait/median | kube | 2 | 11.0 | 1.4 | 12.9% | -70.0 (-86.4%) | 4.0 | yes |" in out
+    assert "| unit/wait/median | asis | 2 | 81.0 | 1.414 |" in out
+    assert "| unit/wait/median | kube | 2 | 11.0 | 1.414 | 12.9% | -70.0 (-86.4%) | 3.960 | yes |" in out
 
 
 def test_a_window_without_gate_kinds_is_refused(tmp_path):
@@ -150,8 +150,8 @@ def test_cli_reports_host_usage_cut_to_each_run(tmp_path, capsys):
         argv += ["--run", f"kube={host_run(tmp_path, f'k{n}', ['node'], 0.25)}"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "| host/mem_peak_mib | asis | 2 | 600.0 | 0.0 | 0.0% |" in out
-    assert "| host/mem_peak_mib | kube | 2 | 300.0 | 0.0 | 0.0% | -300.0 (-50.0%) | 0.0 | yes |" in out
+    assert "| host/mem_peak_mib | asis | 2 | 600.0 | 0.000 | 0.0% |" in out
+    assert "| host/mem_peak_mib | kube | 2 | 300.0 | 0.000 | 0.0% | -300.0 (-50.0%) | 0.000 | yes |" in out
     runs = json.loads((tmp_path / "c.json").read_text())["runs"]
     assert [r["metrics"]["host/cpu_busy_mean"] for r in runs] == [0.5, 0.25, 0.5, 0.25]
 
@@ -177,7 +177,7 @@ def test_cli_refuses_a_design_without_samples_when_others_have_them(tmp_path, ca
 def test_a_single_run_or_zero_baseline_prints_no_verdict():
     rows = summarize({"asis": [{"k": 0.0}, {"k": 0.0}], "kube": [{"k": 5.0}]}, "asis")
     assert next(r for r in rows if r["design"] == "kube")["detectable"] is None
-    assert "| k | kube | 1 | 5.0 | n/a | n/a | 5.0 (n/a) | n/a | n/a |" in render(rows, "asis")
+    assert "| k | kube | 1 | 5.000 | n/a | n/a | 5.000 (n/a) | n/a | n/a |" in render(rows, "asis")
 
 
 def test_span_runs_from_the_first_created_to_the_last_completed_job(tmp_path):
@@ -268,10 +268,10 @@ def test_no_waiting_gives_zero_seconds_and_no_idle_value(tmp_path, capsys):
         argv += ["--run", f"kube={host_run(tmp_path, f'k{n}', ['node'], 0.25, now)}"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "| host/waiting_s | asis | 2 | 0.0 | 0.0 | n/a |" in out
+    assert "| host/waiting_s | asis | 2 | 0.000 | 0.000 | n/a |" in out
     assert "| host/idle_while_waiting | asis | 2 | n/a | n/a | n/a |" in out
     assert "| host/idle_while_waiting | kube | 2 | n/a | n/a | n/a | n/a (n/a) | n/a | n/a |" in out
-    assert "| host/waiting_s | kube | 2 | 0.0 | 0.0 | n/a | 0.0 (n/a) | 0.0 | no |" in out
+    assert "| host/waiting_s | kube | 2 | 0.000 | 0.000 | n/a | 0.000 (n/a) | 0.000 | no |" in out
 
 
 def test_cli_prints_gate_wall_and_idle_while_waiting(tmp_path, capsys):
@@ -286,10 +286,22 @@ def test_cli_prints_gate_wall_and_idle_while_waiting(tmp_path, capsys):
             argv += ["--run", f"{design}={directory}"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "| gate/pr/wall/median | asis | 2 | 240.0 | 0.0 | 0.0% |" in out
-    assert "| gate/schedule/wall/median | kube | 2 | 120.0 | 0.0 | 0.0% | 0.0 (+0.0%) | 0.0 | no |" in out
-    assert "| gate/all/wall/median | asis | 2 | 180.0 | 0.0 | 0.0% |" in out
-    assert "| gate/all/wall/p90 | asis | 2 | 228.0 | 0.0 | 0.0% |" in out
-    assert "| host/waiting_s | asis | 2 | 60.0 | 0.0 | 0.0% |" in out
-    assert "| host/idle_while_waiting | asis | 2 | 0.5 | 0.0 | 0.0% |" in out
-    assert "| host/idle_while_waiting | kube | 2 | 0.3 | 0.0 | 0.0% | -0.2 (-40.0%) | 0.0 | yes |" in out
+    assert "| gate/pr/wall/median | asis | 2 | 240.0 | 0.000 | 0.0% |" in out
+    assert "| gate/schedule/wall/median | kube | 2 | 120.0 | 0.000 | 0.0% | 0.000 (+0.0%) | 0.000 | no |" in out
+    assert "| gate/all/wall/median | asis | 2 | 180.0 | 0.000 | 0.0% |" in out
+    assert "| gate/all/wall/p90 | asis | 2 | 228.0 | 0.000 | 0.0% |" in out
+    assert "| host/waiting_s | asis | 2 | 60.0 | 0.000 | 0.0% |" in out
+    assert "| host/idle_while_waiting | asis | 2 | 0.500 | 0.000 | 0.0% |" in out
+    assert "| host/idle_while_waiting | kube | 2 | 0.300 | 0.000 | 0.0% | -0.200 (-40.0%) | 0.000 | yes |" in out
+
+
+def test_fractions_print_with_three_decimals_and_json_keeps_full_precision(tmp_path, capsys):
+    w = window(tmp_path)
+    argv = ["--window", str(w), "--compress", "4", "--baseline", "asis", "--json", str(tmp_path / "c.json")]
+    for n in range(2):
+        argv += ["--run", f"asis={host_run(tmp_path, f'a{n}', ['vm1'], 0.16374)}"]
+        argv += ["--run", f"kube={host_run(tmp_path, f'k{n}', ['node'], 0.16374)}"]
+    assert main(argv) == 0
+    assert "| host/cpu_busy_mean | asis | 2 | 0.164 | 0.000 |" in capsys.readouterr().out
+    runs = json.loads((tmp_path / "c.json").read_text())["runs"]
+    assert runs[0]["metrics"]["host/cpu_busy_mean"] == pytest.approx(0.16374)
