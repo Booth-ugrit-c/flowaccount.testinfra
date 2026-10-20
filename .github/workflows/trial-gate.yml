@@ -95,5 +95,7 @@ jobs:
           JOB: ${{ toJSON(matrix) }}
         run: python3 -m workload run --job-json "$JOB"
       - name: Remove and report leftovers
-        if: ${{ always() }}
-        run: python3 -m workload leftovers --remove
+        if: ${{ always() && join(matrix.services, ',') != '' }}
+        env:
+          JOB_ID: ${{ matrix.id }}
+        run: python3 -m workload leftovers --remove --job "$JOB_ID"

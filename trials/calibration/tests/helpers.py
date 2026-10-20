@@ -50,9 +50,9 @@ def make_job(name, label, created, start=None, end=None, runner="same", conclusi
     }
 
 
-def make_run(run_id, created, workflow="pipeline.yml"):
+def make_run(run_id, created, workflow="pipeline.yml", event="pull_request", head_branch="feature-x"):
     return {
-        "id": run_id, "created_at": stamp(created), "run_attempt": 1,
+        "id": run_id, "created_at": stamp(created), "run_attempt": 1, "event": event, "head_branch": head_branch,
         "html_url": f"https://github.com/{REPO}/actions/runs/{run_id}", "workflow": workflow,
     }
 
@@ -85,6 +85,8 @@ class FakeGh:
         query = {k: v[0] for k, v in parse_qs(parts.query).items()}
         per_page = int(query.get("per_page", 30))
         segments = parts.path.split("/")
+        if parts.path == f"repos/{REPO}":
+            return [{"default_branch": "main"}]
         if segments[-1] == "runs" and "workflows" in segments:
             workflow = segments[segments.index("workflows") + 1]
             lo, hi = query["created"].split("..")
@@ -93,6 +95,8 @@ class FakeGh:
                 key=lambda r: r["created_at"], reverse=True,
             )
             return paged(matched[: self.cap], per_page, "workflow_runs", len(matched))
+        if segments[-2] == "runs" and segments[-1].isdigit():
+            return [next(r for r in self.runs if r["id"] == int(segments[-1]))]
         if segments[-1] == "jobs":
             run_id = int(segments[-2])
             assert query["filter"] == "all"

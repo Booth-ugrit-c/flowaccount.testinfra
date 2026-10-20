@@ -154,11 +154,12 @@ class ServiceSet:
             pass
 
 
-def leftovers():
-    code, out, err = docker(["ps", "-a", "--filter", f"name=^{NAME_PREFIX}", "--format", "{{.Names}}"], 60)
+def leftovers(job_id=None):
+    prefix = f"{NAME_PREFIX}{job_id}-" if job_id else NAME_PREFIX
+    code, out, err = docker(["ps", "-a", "--filter", f"name=^{prefix}", "--format", "{{.Names}}"], 60)
     if code != 0:
         raise ServiceFailure(f"docker ps failed: {_first_line(err)}")
-    return [line for line in out.split() if line.startswith(NAME_PREFIX)]
+    return [line for line in out.split() if line.startswith(prefix)]
 
 
 def remove(names):

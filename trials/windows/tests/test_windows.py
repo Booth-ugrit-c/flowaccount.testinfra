@@ -66,6 +66,12 @@ def test_window_calibration_rebases_offsets_and_keeps_only_window_jobs():
     assert [(g["gate"], g["arrival_offset_s"]) for g in out["gates"]] == [("g-0001", 0.0)]
 
 
+def test_window_calibration_keeps_the_gate_event_and_kind():
+    cal = calibration({**gate("g-0001", 0.0, cjob("unit-001")), "event": "schedule", "kind": "schedule"})
+    out = window_calibration(cal, choose(jobs_of(cal), length=300, target=1, max_windows=1)[0], "w01")
+    assert (out["gates"][0]["event"], out["gates"][0]["kind"]) == ("schedule", "schedule")
+
+
 def test_cli_exits_2_when_nothing_is_usable(tmp_path):
     path = tmp_path / "cal.json"
     path.write_text(json.dumps(calibration(gate("g-0001", 0.0, cjob("unit-001", split="excluded")))))

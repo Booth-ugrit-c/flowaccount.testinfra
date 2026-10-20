@@ -42,6 +42,24 @@ def test_lane_missing_from_a_table_fails_loudly():
         build_specs(gate([job("unit-001", "unit", 1.0)]), LABELS, FACTORS, THREADS, {"integration": 1})
 
 
+def test_lane_and_kind_label_wins_over_the_lane_label():
+    labels = {"unit": "pool-unit", "unit:schedule": "pool-unit-sched"}
+    pr = {**gate([job("unit-001", "unit", 1.0)]), "kind": "pr"}
+    nightly = {**gate([job("unit-002", "unit", 1.0)]), "kind": "schedule"}
+    assert build_specs(pr, labels, FACTORS, THREADS, MEMORY)[0][0]["label"] == "pool-unit"
+    assert build_specs(nightly, labels, FACTORS, THREADS, MEMORY)[0][0]["label"] == "pool-unit-sched"
+
+
+def test_kind_routing_refuses_a_gate_without_a_kind():
+    with pytest.raises(SpecError, match="annotate-events"):
+        build_specs(gate([job("unit-001", "unit", 1.0)]), {"unit": "a", "unit:pr": "b"}, FACTORS, THREADS, MEMORY)
+
+
+def test_a_kind_with_no_matching_label_fails_loudly():
+    with pytest.raises(SpecError, match="--labels"):
+        build_specs({**gate([job("unit-001", "unit", 1.0)]), "kind": "pr"}, {"unit:schedule": "a"}, FACTORS, THREADS, MEMORY)
+
+
 def test_bad_or_duplicate_ids_are_refused():
     with pytest.raises(SpecError, match="must match"):
         build_specs(gate([job("Unit_1", "unit", 1.0)]), LABELS, FACTORS, THREADS, MEMORY)

@@ -99,6 +99,7 @@ def window_calibration(calibration: dict, window: Window, name: str) -> dict:
                 "gate": gate["gate"],
                 "arrival_offset_s": round(gate["arrival_offset_s"] - window.start, 3),
                 "split": gate["split"],
+                **{key: gate[key] for key in ("event", "kind") if key in gate},
                 "jobs": jobs,
             }
         )

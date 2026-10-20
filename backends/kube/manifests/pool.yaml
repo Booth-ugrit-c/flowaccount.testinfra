@@ -1,0 +1,78 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ti-pr
+value: 1000
+preemptionPolicy: Never
+globalDefault: false
+description: Pull-request jobs; scheduled ahead of ti-sched, never preempt.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ti-sched
+value: 100
+preemptionPolicy: Never
+globalDefault: false
+description: Scheduled and default-branch jobs.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ti-runners
+---
+# Above the pool: a quota equal to the pool refuses pods instead of leaving them Pending.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ti-runners
+  namespace: ti-runners
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    pods: "24"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ti-mirror
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mirror
+  namespace: ti-mirror
+spec:
+  selector:
+    matchLabels:
+      app: mirror
+  template:
+    metadata:
+      labels:
+        app: mirror
+    spec:
+      hostNetwork: true
+      containers:
+        - name: registry
+          image: __MIRROR_IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REGISTRY_PROXY_REMOTEURL
+              value: https://registry-1.docker.io
+            - name: REGISTRY_HTTP_ADDR
+              value: 0.0.0.0:5000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/lib/ti-mirror
+            type: Directory

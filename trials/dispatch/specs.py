@@ -58,6 +58,12 @@ def select_gates(calibration: dict, split: str, limit: int | None) -> list[dict]
     return gates
 
 
+def label_for(labels: dict, lane: str, kind: str | None) -> str | None:
+    if kind is None and any(key.startswith(f"{lane}:") for key in labels):
+        raise SpecError(f"--labels routes lane {lane!r} by kind but a gate has no kind; run annotate-events first")
+    return labels.get(f"{lane}:{kind}", labels.get(lane))
+
+
 def build_specs(gate: dict, labels: dict, factors: dict, threads: dict, memory: dict) -> tuple[list[dict], list[str]]:
     specs, skipped, seen = [], [], set()
     for job in gate["jobs"]:
@@ -70,10 +76,12 @@ def build_specs(gate: dict, labels: dict, factors: dict, threads: dict, memory: 
         if job.get("duration_s") is None:
             skipped.append(job_id)
             continue
-        for flag, table in (("--labels", labels), ("--factor", factors), ("--threads", threads), ("--memory", memory)):
+        for flag, table in (("--factor", factors), ("--threads", threads), ("--memory", memory)):
             if lane not in table:
                 raise SpecError(f"gate {gate['gate']} job {job_id}: lane {lane!r} missing from {flag}")
-        label = labels[lane]
+        label = label_for(labels, lane, gate.get("kind"))
+        if label is None:
+            raise SpecError(f"gate {gate['gate']} job {job_id}: lane {lane!r} kind {gate.get('kind')!r} missing from --labels")
         if not SAFE_RE.match(label):
             raise SpecError(f"--labels: {label!r} must match {SAFE_RE.pattern}")
         specs.append(

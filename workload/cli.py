@@ -44,8 +44,11 @@ def cmd_check(args):
 
 
 def cmd_leftovers(args):
+    if args.job is not None and not spec_mod.ID_RE.fullmatch(args.job):
+        print(f"--job must match {spec_mod.ID_RE.pattern}", file=sys.stderr)
+        return EXIT_INVALID
     try:
-        names = services.leftovers()
+        names = services.leftovers(args.job)
         for name in names:
             print(name)
         if args.remove:
@@ -69,6 +72,7 @@ def build_parser():
     check.set_defaults(func=cmd_check)
     left = sub.add_parser("leftovers", help="list containers left by earlier runs")
     left.add_argument("--remove", action="store_true", help="also remove them; the exit code still reports that they existed")
+    left.add_argument("--job", help="only containers of this job id; runners sharing a daemon must pass it")
     left.set_defaults(func=cmd_leftovers)
     return parser
 
