@@ -2,6 +2,7 @@ import dataclasses
 import json
 import os
 import re
+import subprocess
 
 import pytest
 
@@ -81,6 +82,53 @@ def test_missing_docker_binary_is_a_failure_not_a_crash(monkeypatch):
     result = runner.run_job(spec_mod.parse_spec(spec(services=["cache"])))
     assert result["ok"] is False
     assert result["error"] == "docker is not installed"
+
+
+def test_stop_reports_a_failed_removal_without_raising(monkeypatch, capsys):
+    service_set = services.ServiceSet("integration-004", ["sql", "cache"])
+    error = "Error response from daemon: removal of container is already in progress\nsecond line"
+    monkeypatch.setattr(services, "docker", lambda args, timeout: (1, "", error))
+    service_set.stop()
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+    assert all(name in err for name in service_set.names.values())
+    assert "Error response from daemon: removal of container is already in progress" in err
+    assert "second line" not in err
+
+
+def test_stop_reports_a_removal_timeout_without_raising(monkeypatch, capsys):
+    service_set = services.ServiceSet("integration-004", ["sql", "cache"])
+
+    def hung(args, timeout):
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(services, "docker", hung)
+    service_set.stop()
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+    assert all(name in err for name in service_set.names.values())
+    assert "120s" in err
+
+
+def test_stop_reports_an_unrunnable_docker_without_raising(monkeypatch, capsys):
+    service_set = services.ServiceSet("integration-004", ["cache"])
+
+    def absent(args, timeout):
+        raise OSError("docker went away")
+
+    monkeypatch.setattr(services, "docker", absent)
+    service_set.stop()
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+    assert service_set.names["cache"] in err
+    assert "docker went away" in err
+
+
+def test_stop_is_silent_when_removal_succeeds(monkeypatch, capsys):
+    service_set = services.ServiceSet("integration-004", ["cache"])
+    monkeypatch.setattr(services, "docker", lambda args, timeout: (0, "", ""))
+    service_set.stop()
+    assert capsys.readouterr().err == ""
 
 
 def test_leftovers_lists_only_prefixed_names(monkeypatch):

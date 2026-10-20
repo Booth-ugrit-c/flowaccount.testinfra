@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 NAME_PREFIX = "wl-trial-"
 START_TIMEOUT_SECONDS = 900
 PROBE_ATTEMPT_SECONDS = 20
+REMOVE_TIMEOUT_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -148,10 +150,16 @@ class ServiceSet:
     def stop(self):
         if not self.names:
             return
+        names = " ".join(self.names.values())
         try:
-            docker(["rm", "-f", "-v", *self.names.values()], 120)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+            code, _, err = docker(["rm", "-f", "-v", *self.names.values()], REMOVE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            print(f"workload: removing {names} timed out after {REMOVE_TIMEOUT_SECONDS}s", file=sys.stderr, flush=True)
+        except OSError as exc:
+            print(f"workload: removing {names} failed: {exc}", file=sys.stderr, flush=True)
+        else:
+            if code != 0:
+                print(f"workload: removing {names} failed: {_first_line(err)}", file=sys.stderr, flush=True)
 
 
 def leftovers(job_id=None):
