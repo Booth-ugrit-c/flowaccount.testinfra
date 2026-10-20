@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Usage: down.sh <ssh-config> <server-host>
-# Removes the scale sets (and their GitHub registrations), the controller and the ARC token; k3s stays.
 set -euo pipefail
 
 ssh_config=${1:?ssh config}; server=${2:?server host}
