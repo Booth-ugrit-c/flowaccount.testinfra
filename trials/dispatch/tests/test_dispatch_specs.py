@@ -118,3 +118,5 @@ def test_a_gate_whose_lanes_straddle_the_split_loads_and_only_all_selects_it(tmp
     calibration = load_calibration(path)
     assert [g["gate"] for g in select_gates(calibration, "all", None)] == ["g-0001", "g-0002"]
     assert [g["gate"] for g in select_gates(calibration, "fit", None)] == ["g-0001"]
+    with pytest.raises(SpecError, match="no gates selected for split=holdout"):
+        select_gates(calibration, "holdout", None)
