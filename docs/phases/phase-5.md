@@ -67,3 +67,5 @@ The same command on the same inputs gives byte-identical output. Checked on a sy
 - The improved design is measured as one bundle; the effect of each tuning is not separated.
 - The penalty of gates running concurrently is not computed.
 - No rank test (Mann-Whitney U) is computed; the verdict is the normal-approximation minimum detectable effect.
+- With `needs: validate` a gate's replay jobs are created only after its hosted validation job ends, so each gate arrives later than its recorded offset by that job's duration, and the overlap between gates can shift; job wait is measured from creation and is unaffected. The size of the delay is not measured.
+- A run whose work waits only in spans shorter than the sampling interval can have no sample while work waits, and is refused (`trials/compare/stats.py:106-107`).
