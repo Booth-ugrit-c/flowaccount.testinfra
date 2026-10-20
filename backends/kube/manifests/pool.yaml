@@ -28,8 +28,8 @@ metadata:
   namespace: ti-runners
 spec:
   hard:
-    requests.cpu: "16"
-    requests.memory: 32Gi
+    requests.cpu: "32"
+    requests.memory: 48Gi
     pods: "24"
 ---
 apiVersion: v1

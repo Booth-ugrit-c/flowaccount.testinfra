@@ -6,7 +6,7 @@
 |---|---|
 | As-is design | `backends/container/asis/`: one persistent runner per VM, registration token read from stdin, sampler installed as a service |
 | Improved design | `backends/container/improved/`: several runners per VM from one pristine runner copy, systemd memory limit per runner, schedule label on the last runner, job images pulled at setup |
-| Kube design | `backends/kube/`: single-node k3s, scale sets per lane and gate kind, priority classes, namespace quota of 16 CPU and 32 GiB (below a full pool), Docker-in-Docker sidecar for integration jobs behind a node-local pull-through mirror, images pinned by digest and k3s, helm and the scale-set chart by version in `versions.env` |
+| Kube design | `backends/kube/`: single-node k3s, scale sets per lane and gate kind, priority classes, namespace quota (the trial ran with 16 CPU and 32 GiB, below a full pool; the manifest now carries 32 CPU, 48 GiB and 24 pods), Docker-in-Docker sidecar for integration jobs behind a node-local pull-through mirror, images pinned by digest and k3s, helm and the scale-set chart by version in `versions.env` |
 | Lab host | `lab/pve01/`: start the lab hypervisor only when the host has the memory for it, resize it only when it is off, switch the running design with a memory check before starting it |
 | Dispatch by kind | `trials/dispatch/`: `--labels lane:kind=label` routes `pr` and `schedule` gates to different labels; a kind-routed replay refuses a window without kinds |
 | Per-job cleanup | `workload leftovers --job <id>` removes only that job's containers, so two runners sharing one Docker daemon do not remove each other's services; the dispatch workflow passes the job id and skips the step for jobs without services |
