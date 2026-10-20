@@ -110,3 +110,11 @@ def test_an_unknown_gate_kind_is_refused_instead_of_falling_to_the_lane_label():
     weekly = {**gate([job("unit-001", "unit", 1.0)]), "kind": "weekly"}
     with pytest.raises(SpecError, match="kind 'weekly'.*pr.*schedule"):
         build_specs(weekly, {"unit": "pool-unit"}, FACTORS, THREADS, MEMORY)
+
+
+def test_a_gate_whose_lanes_straddle_the_split_loads_and_only_all_selects_it(tmp_path):
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"gates": [gate([], "g-0001", 0.0, "fit"), gate([], "g-0002", 1.0, "mixed")]}), encoding="utf-8")
+    calibration = load_calibration(path)
+    assert [g["gate"] for g in select_gates(calibration, "all", None)] == ["g-0001", "g-0002"]
+    assert [g["gate"] for g in select_gates(calibration, "fit", None)] == ["g-0001"]

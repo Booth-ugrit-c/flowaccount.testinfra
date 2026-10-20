@@ -61,6 +61,7 @@ The same command on the same inputs gives byte-identical output. Checked on a sy
 | the trial gate matrix job needs input validation | the test found no `needs: validate` on the matrix job |
 | the kube namespace quota is 32 CPU, 48 GiB, 24 pods, above a full pool | the quota test failed with `assert 16 >= 26.0` |
 | fractional metrics print with three decimals | `0.12345` printed as `0.1` |
+| a gate whose lanes straddle the fit/holdout cut (`mixed`, `trials/calibration/build.py:157`) loads; selecting fit or holdout still leaves it out | the test failed with `SpecError: gate g-0002: split must be fit or holdout` |
 
 ## Known limits
 
