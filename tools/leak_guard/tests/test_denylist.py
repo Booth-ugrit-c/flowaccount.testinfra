@@ -195,3 +195,48 @@ def test_wide_encoded_sibling_deny_list_is_exit_two(work):
     (base / "_testinfra-private").mkdir()
     (base / "_testinfra-private" / "leak-guard-denylist.txt").write_bytes("alpha\n".encode("utf-16"))
     assert run_cli(repo, "scan").returncode == 2
+
+
+THAI_LINE = "\u0e23\u0e2b\u0e31\u0e2a\u0e25\u0e31\u0e1a\u0e20\u0e32\u0e22\u0e43\u0e19"
+
+
+def test_thai_line_in_utf16le_without_bom_or_newline_is_exit_two_from_a_file(work, tmp_path):
+    _, repo = work
+    path = tmp_path / "thai16.txt"
+    path.write_bytes(THAI_LINE.encode("utf-16-le"))
+    assert b"\x00" not in path.read_bytes()
+    proc = run_cli(repo, "scan", env=clean_env(LEAK_GUARD_DENYLIST_FILE=str(path)))
+    assert proc.returncode == 2
+    assert "deny-list 1 entries" not in proc.stdout
+
+
+def test_thai_line_in_utf16le_without_bom_or_newline_is_exit_two_from_env(work):
+    _, repo = work
+    env = clean_env(LEAK_GUARD_DENYLIST=base64.b64encode(THAI_LINE.encode("utf-16-le")).decode())
+    proc = run_cli(repo, "scan", env=env)
+    assert proc.returncode == 2
+    assert "deny-list 1 entries" not in proc.stdout
+
+
+@pytest.mark.parametrize("control", ["\x01", "\x07", "\x08", "\x0b", "\x0c", "\x0e", "\x1b", "\x1f"])
+def test_any_c0_control_other_than_tab_cr_lf_is_exit_two_and_quotes_nothing(work, tmp_path, control):
+    _, repo = work
+    path = tmp_path / "ctl.txt"
+    path.write_bytes(f"alpha{control}beta\n".encode("utf-8"))
+    proc = run_cli(repo, "scan", env=clean_env(LEAK_GUARD_DENYLIST_FILE=str(path)))
+    assert proc.returncode == 2
+    assert "alpha" not in proc.stdout + proc.stderr
+    env = clean_env(LEAK_GUARD_DENYLIST=base64.b64encode(f"alpha{control}beta\n".encode()).decode())
+    proc = run_cli(repo, "scan", env=env)
+    assert proc.returncode == 2
+    assert "alpha" not in proc.stdout + proc.stderr
+
+
+def test_tab_cr_lf_and_utf8_thai_are_still_accepted(work, tmp_path):
+    _, repo = work
+    path = tmp_path / "ok.txt"
+    path.write_bytes(f"# note\tkept\r\nalpha\r\n{THAI_LINE}\n".encode("utf-8"))
+    proc = run_cli(repo, "scan", env=clean_env(LEAK_GUARD_DENYLIST_FILE=str(path)))
+    assert proc.returncode == 1
+    assert lines_flagged(proc) == ["hit.txt:1"]
+    assert "deny-list 2 entries (source: file)" in proc.stdout
