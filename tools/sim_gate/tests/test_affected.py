@@ -224,9 +224,26 @@ def test_deleted_project_directory_marks_everything_affected():
     assert names(result["build"]) == FULL_ORDER
 
 
-@pytest.mark.parametrize("file", ["README.md", "docs/guide.md", "tools/other.py", "sim/other/Directory.Build.props", "global.json"])
+@pytest.mark.parametrize("file", ["README.md", "docs/guide.md", "tools/other.py", "sim/other/Directory.Build.props", "sim/other/global.json"])
 def test_a_file_outside_the_root_selects_nothing(file):
     assert pick([file]) == {"build": [], "test": []}
+
+
+@pytest.mark.parametrize("file", [
+    "Directory.Build.targets",
+    "Directory.Build.props",
+    "sim/Directory.Build.props",
+    "Directory.Packages.props",
+    "sim/Directory.Packages.props",
+    "nuget.config",
+    "sim/NuGet.Config",
+    "global.json",
+    "sim/global.json",
+])
+def test_a_build_wide_file_in_an_ancestor_of_the_root_marks_every_project_affected(file):
+    result = pick([file])
+    assert names(result["build"]) == FULL_ORDER
+    assert set(names(result["test"])) == TEST_PROJECTS
 
 
 @pytest.mark.parametrize("file", ["README.md", ".gitignore", "notes.txt"])
@@ -352,3 +369,49 @@ def test_cli_refuses_a_ref_that_looks_like_a_git_option(repo, capsys, flag):
     assert out.out == ""
     assert "must not start with '-'" in out.err
     assert not [p for p in repo.iterdir() if p.name.startswith("leaked")]
+
+
+def project_with(item):
+    return csproj(f"<ItemGroup>{item}</ItemGroup>")
+
+
+@pytest.mark.parametrize("item", [
+    '<Compile Include="..\\Other\\X.cs" />',
+    '<Compile Include="..\\..\\shared\\**\\*.cs" />',
+    '<EmbeddedResource Include="../Other/res.resx" />',
+    '<None Update="..\\x.json" />',
+    '<Compile Include="gen\\A.cs;..\\Other\\X.cs" />',
+    '<Compile Include="C:\\elsewhere\\X.cs" />',
+    '<Compile Include="/elsewhere/X.cs" />',
+    '<Compile Include="$(SharedDir)\\X.cs" />',
+    '<Import Project="..\\shared\\common.props" />',
+    '<Import Project="$(MSBuildThisFileDirectory)..\\common.props" />',
+])
+def test_an_item_or_import_that_leaves_the_project_directory_is_refused(item):
+    body = item if item.startswith("<Import") else f"<ItemGroup>{item}</ItemGroup>"
+    with pytest.raises(affected.GraphError, match=r"r/A/A.csproj: .*outside the project directory"):
+        affected.parse_project("r/A/A.csproj", csproj(body))
+
+
+@pytest.mark.parametrize("item", [
+    '<Compile Include="gen\\X.cs" />',
+    '<Compile Include="**\\*.cs" Exclude="obj\\**" />',
+    '<Compile Remove="old\\X.cs" />',
+    '<EmbeddedResource Include="res/a.resx" />',
+    '<Using Include="System.Text" />',
+    '<InternalsVisibleTo Include="Other.Tests" />',
+    '<PackageReference Include="xunit" Version="2.9.3" />',
+    '<ProjectReference Include="..\\Core\\Core.csproj" />',
+])
+def test_an_item_that_stays_inside_the_project_directory_is_accepted(item):
+    affected.parse_project("r/A/A.csproj", project_with(item))
+
+
+def test_cli_refuses_a_project_that_compiles_a_file_from_another_project(repo, capsys):
+    write(repo, f"{ROOT}/src/Service/Service.csproj", project_with('<Compile Include="..\\Other\\Stamp.cs" />'))
+    commit(repo)
+    code, out, err = run_cli(capsys=capsys)
+    assert code == 2
+    assert out == ""
+    assert f"{ROOT}/src/Service/Service.csproj" in err
+    assert "..\\Other\\Stamp.cs" in err

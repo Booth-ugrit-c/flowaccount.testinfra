@@ -4,6 +4,7 @@ import argparse
 import heapq
 import json
 import posixpath
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -18,6 +19,11 @@ BUILD_WIDE_SUFFIXES = (".sln", ".slnx")
 INERT_NAMES = frozenset({".gitignore", ".gitattributes"})
 INERT_SUFFIXES = (".md", ".txt")
 TEST_SDK_PACKAGE = "microsoft.net.test.sdk"
+PATH_ATTRIBUTES = ("Include", "Update", "Remove")
+NAME_ITEMS = frozenset({
+    "ProjectReference", "PackageReference", "PackageVersion", "GlobalPackageReference",
+    "FrameworkReference", "Using", "InternalsVisibleTo", "Reference",
+})
 
 
 class GraphError(Exception):
@@ -45,6 +51,24 @@ def _local(tag: str) -> str:
     return tag.rpartition("}")[2]
 
 
+def _may_leave_directory(value: str) -> bool:
+    if "$(" in value or "@(" in value or "%(" in value:
+        return True
+    relative = posixpath.normpath(value.strip().replace("\\", "/"))
+    return relative == ".." or relative.startswith(("../", "/")) or re.match(r"[A-Za-z]:", relative) is not None
+
+
+def _untracked_paths(path: str, tag: str, element) -> None:
+    attributes = (*PATH_ATTRIBUTES, "Project") if tag == "Import" else PATH_ATTRIBUTES
+    for attribute in attributes:
+        for value in (element.get(attribute) or "").split(";"):
+            if value.strip() and _may_leave_directory(value):
+                raise GraphError(
+                    f"{path}: <{tag} {attribute}='{value.strip()}'> may reach outside the project directory; "
+                    "that dependency would not be tracked"
+                )
+
+
 def parse_project(path: str, content: Union[str, bytes]) -> Project:
     data = content.encode("utf-8") if isinstance(content, str) else content
     try:
@@ -56,6 +80,8 @@ def parse_project(path: str, content: Union[str, bytes]) -> Project:
     is_test = False
     for element in tree.iter():
         tag = _local(element.tag)
+        if tag not in NAME_ITEMS:
+            _untracked_paths(path, tag, element)
         if tag == "ProjectReference":
             include = element.get("Include")
             if include is None:
@@ -130,6 +156,11 @@ def _is_inert(name: str) -> bool:
     return lower in INERT_NAMES or lower.endswith(INERT_SUFFIXES)
 
 
+def _in_ancestor(file: str, root: str) -> bool:
+    parent = posixpath.dirname(file)
+    return parent == "" or root.startswith(parent + "/")
+
+
 def _inside(file: str, directory: str) -> bool:
     return directory == "" or file.startswith(directory + "/")
 
@@ -138,9 +169,11 @@ def changed_projects(graph: Mapping[str, Project], changed: Iterable[str], root:
     prefix = root.strip("/") + "/"
     seeds = set()
     for file in changed:
-        if not file.startswith(prefix):
-            continue
         name = posixpath.basename(file)
+        if not file.startswith(prefix):
+            if _is_build_wide(name) and _in_ancestor(file, prefix.rstrip("/")):
+                return set(graph)
+            continue
         if _is_build_wide(name):
             return set(graph)
         owners = [project.path for project in graph.values() if _inside(file, project.directory)]
