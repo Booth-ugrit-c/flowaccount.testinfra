@@ -24,7 +24,7 @@ The improved design is measured as one bundle (runner count, memory limits, sche
 
 The kube pool runs on one node. Lab guests cannot reach each other, so a second node could not join; a two-node pool is a later change, not part of this comparison.
 
-The phase 2 trial ran with a namespace quota of 16 CPU and 32 GiB of requests, below a full pool. A full pool is four scale sets of up to four runners: eight unit pods at 1.5 CPU and 1.5 GiB and eight integration pods at 1.75 CPU and 3 GiB with their Docker-in-Docker sidecar, 26 CPU and 36 GiB in all. So once roughly nine to ten runner pods were admitted, the API refused further runner pods at admission instead of leaving them pending, while the node itself runs only four to five such pods at once. The manifest now carries 32 CPU, 48 GiB and 24 pods, above a full pool, and a test computes the full pool from the manifests.
+The phase 2 trial ran with a namespace quota of 16 CPU and 32 GiB of requests, below a full pool. A full pool is four scale sets of up to four runners: eight unit pods at 1.5 CPU and 1.5 GiB and eight integration pods at 1.75 CPU and 3 GiB with their Docker-in-Docker sidecar, 26 CPU and 36 GiB in all. So once roughly nine to ten runner pods were admitted, the API refused further runner pods at admission instead of leaving them pending, while the node itself runs at most four such pods at once: after the system pods' requests, an eight-CPU node has room for four pods of either kind. The manifest now carries 32 CPU, 48 GiB and 24 pods, above a full pool, and a test computes the full pool from the manifests.
 
 ## Consequences
 
