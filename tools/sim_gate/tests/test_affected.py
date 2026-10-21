@@ -386,6 +386,9 @@ def project_with(item):
     '<Compile Include="$(SharedDir)\\X.cs" />',
     '<Import Project="..\\shared\\common.props" />',
     '<Import Project="$(MSBuildThisFileDirectory)..\\common.props" />',
+    '<Reference Include="../lib/Vendor.dll" />',
+    '<Reference Include="Vendor"><HintPath>../../lib/Vendor.dll</HintPath></Reference>',
+    '<Reference Include="Vendor"><HintPath>$(OutDir)Vendor.dll</HintPath></Reference>',
 ])
 def test_an_item_or_import_that_leaves_the_project_directory_is_refused(item):
     body = item if item.startswith("<Import") else f"<ItemGroup>{item}</ItemGroup>"
@@ -402,6 +405,8 @@ def test_an_item_or_import_that_leaves_the_project_directory_is_refused(item):
     '<InternalsVisibleTo Include="Other.Tests" />',
     '<PackageReference Include="xunit" Version="2.9.3" />',
     '<ProjectReference Include="..\\Core\\Core.csproj" />',
+    '<Reference Include="System.Net.Http" />',
+    '<Reference Include="Vendor"><HintPath>lib/Vendor.dll</HintPath></Reference>',
 ])
 def test_an_item_that_stays_inside_the_project_directory_is_accepted(item):
     affected.parse_project("r/A/A.csproj", project_with(item))

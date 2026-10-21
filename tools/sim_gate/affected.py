@@ -22,7 +22,7 @@ TEST_SDK_PACKAGE = "microsoft.net.test.sdk"
 PATH_ATTRIBUTES = ("Include", "Update", "Remove")
 NAME_ITEMS = frozenset({
     "ProjectReference", "PackageReference", "PackageVersion", "GlobalPackageReference",
-    "FrameworkReference", "Using", "InternalsVisibleTo", "Reference",
+    "FrameworkReference", "Using", "InternalsVisibleTo",
 })
 
 
@@ -82,6 +82,11 @@ def parse_project(path: str, content: Union[str, bytes]) -> Project:
         tag = _local(element.tag)
         if tag not in NAME_ITEMS:
             _untracked_paths(path, tag, element)
+        if tag == "HintPath" and (element.text or "").strip() and _may_leave_directory(element.text):
+            raise GraphError(
+                f"{path}: <HintPath>{element.text.strip()}</HintPath> may reach outside the project directory; "
+                "that dependency would not be tracked"
+            )
         if tag == "ProjectReference":
             include = element.get("Include")
             if include is None:
