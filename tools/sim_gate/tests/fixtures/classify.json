@@ -1,0 +1,1287 @@
+{
+ "build_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "health",
+   "services"
+  ]
+ },
+ "cache_tripwire_alone": {
+  "log": null,
+  "markers": [
+   "cache-tripwire"
+  ]
+ },
+ "cache_tripwire_over_a_success": {
+  "job": {
+   "conclusion": "success",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Hygiene",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Set up .NET",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Test",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "build",
+   "cache-tripwire",
+   "health",
+   "services",
+   "test-end",
+   "test-start"
+  ]
+ },
+ "cache_tripwire_over_a_test_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Hygiene",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Set up .NET",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Test",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "build",
+   "cache-tripwire",
+   "health",
+   "services",
+   "test-end",
+   "test-start"
+  ]
+ },
+ "checkout_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": null
+ },
+ "garbage_job_json": {
+  "log": null,
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ],
+  "raw_job": "{not json"
+ },
+ "health_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": null
+ },
+ "hygiene_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Hygiene",
+     "number": 3,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "Process completed with exit code 1.\n",
+  "markers": []
+ },
+ "job_cancelled_before_test": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "build",
+   "health",
+   "services"
+  ]
+ },
+ "job_timeout": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Hygiene",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "cancelled",
+     "name": "Test",
+     "number": 8,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "The job running on runner x has exceeded the maximum execution time of 25 minutes.\nThe operation was canceled.\n",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "lost_communication_log": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "The self-hosted runner: vm-a lost communication with the server. Verify the machine is running and has a healthy network connection.\n",
+  "markers": [
+   "health",
+   "services"
+  ]
+ },
+ "missing_job_json": {
+  "log": "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.\n",
+  "markers": null
+ },
+ "never_started_no_artifact": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": null
+ },
+ "never_started_no_steps": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": []
+  },
+  "log": null,
+  "markers": null
+ },
+ "pass_full": {
+  "job": {
+   "conclusion": "success",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-end",
+   "test-start"
+  ]
+ },
+ "pass_without_markers": {
+  "job": {
+   "conclusion": "success",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": null
+ },
+ "runner_lost_log": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.\n",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "setup_dotnet_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Hygiene",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Set up .NET",
+     "number": 4,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "Process completed with exit code 1.\n",
+  "markers": null
+ },
+ "setup_job_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "failure",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": null
+ },
+ "success_without_test_evidence": {
+  "job": {
+   "conclusion": "success",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": null
+ },
+ "test_end_with_runner_lost_text": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.\n",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-end",
+   "test-start"
+  ]
+ },
+ "test_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-end",
+   "test-start"
+  ]
+ },
+ "test_step_cancelled": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "cancelled",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "test_step_failed_no_end_no_fingerprint": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "Annotation: Process completed with exit code 1.\n",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "unknown_extra_markers": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "health",
+   "stray-file",
+   "test-start"
+  ]
+ }
+}

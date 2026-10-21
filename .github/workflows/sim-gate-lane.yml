@@ -1,0 +1,104 @@
+name: sim-gate-lane
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        required: true
+        type: string
+      base:
+        required: true
+        type: string
+      head:
+        required: true
+        type: string
+      fail_test:
+        required: false
+        default: false
+        type: boolean
+      simulate_kill:
+        required: false
+        default: none
+        type: string
+      lab_label:
+        required: false
+        default: ""
+        type: string
+    outputs:
+      target:
+        description: Where the attempt was routed
+        value: ${{ jobs.route.outputs.target }}
+      attempt_verdict:
+        description: Classification of the first attempt
+        value: ${{ jobs.attempt.outputs.verdict }}
+      retry_verdict:
+        description: Classification of the cloud retry, empty when it did not run
+        value: ${{ jobs.retry.outputs.verdict }}
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: route ${{ inputs.lane }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: sim-route
+    outputs:
+      target: ${{ steps.pick.outputs.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Pick the target
+        id: pick
+        env:
+          SIM_ROUTE_TOKEN: ${{ secrets.SIM_ROUTE_TOKEN }}
+          LAB_LABEL: ${{ inputs.lab_label }}
+        run: |
+          target=$(python3 -m tools.sim_gate.route "$LAB_LABEL")
+          echo "target=${target}" >> "$GITHUB_OUTPUT"
+
+  attempt:
+    name: attempt
+    needs: route
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]
+    with:
+      tag: ${{ inputs.lane }}-attempt
+      lane: ${{ inputs.lane }}
+      base: ${{ inputs.base }}
+      head: ${{ inputs.head }}
+      runner: ${{ needs.route.outputs.target == 'onprem' && inputs.lab_label || 'ubuntu-24.04' }}
+      fail_test: ${{ inputs.fail_test }}
+      kill_runner: ${{ inputs.simulate_kill == 'both' || inputs.simulate_kill == 'onprem' && needs.route.outputs.target == 'onprem' }}
+
+  retry:
+    name: retry
+    needs:
+      - route
+      - attempt
+    if: ${{ !cancelled() && needs.attempt.outputs.verdict == 'infra' && needs.route.outputs.target == 'onprem' }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]
+    with:
+      tag: ${{ inputs.lane }}-retry
+      lane: ${{ inputs.lane }}
+      base: ${{ inputs.base }}
+      head: ${{ inputs.head }}
+      runner: ubuntu-24.04
+      fail_test: ${{ inputs.fail_test }}
+      kill_runner: ${{ inputs.simulate_kill == 'both' }}

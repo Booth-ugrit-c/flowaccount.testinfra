@@ -1,0 +1,115 @@
+name: sim-gate
+
+run-name: sim-gate ${{ inputs.base }} to ${{ inputs.head }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base git ref for the affected selection
+        required: false
+        default: origin/main
+        type: string
+      head:
+        description: Head git ref for the affected selection
+        required: false
+        default: HEAD
+        type: string
+      fail_test:
+        description: Lab fault, add one failing test to the first test project of each lane
+        required: false
+        default: false
+        type: boolean
+      simulate_kill:
+        description: Lab fault, kill the runner mid test (none, onprem attempt only, or attempt and retry)
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - onprem
+          - both
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate refs
+        env:
+          BASE_REF: ${{ inputs.base }}
+          HEAD_REF: ${{ inputs.head }}
+        run: |
+          set -eu
+          for ref in "$BASE_REF" "$HEAD_REF"; do
+              case "$ref" in
+                  '' | -* | *[!A-Za-z0-9._/~^@-]*)
+                      echo "::error::a ref is empty, starts with a dash or has characters outside A-Za-z0-9._/~^@-"
+                      exit 1
+                      ;;
+              esac
+          done
+
+  unit:
+    name: unit
+    needs: validate
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: ./.github/workflows/sim-gate-lane.yml # zizmor: ignore[self-repository]
+    with:
+      lane: unit
+      base: ${{ inputs.base }}
+      head: ${{ inputs.head }}
+      fail_test: ${{ inputs.fail_test }}
+      simulate_kill: ${{ inputs.simulate_kill }}
+      lab_label: ${{ vars.SIM_LAB_LABEL }}
+
+  integration:
+    name: integration
+    needs: validate
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: ./.github/workflows/sim-gate-lane.yml # zizmor: ignore[self-repository]
+    with:
+      lane: integration
+      base: ${{ inputs.base }}
+      head: ${{ inputs.head }}
+      fail_test: ${{ inputs.fail_test }}
+      simulate_kill: ${{ inputs.simulate_kill }}
+      lab_label: ${{ vars.SIM_LAB_LABEL }}
+
+  gate:
+    name: gate
+    needs:
+      - unit
+      - integration
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Decide
+        env:
+          UNIT_ATTEMPT: ${{ needs.unit.outputs.attempt_verdict }}
+          UNIT_RETRY: ${{ needs.unit.outputs.retry_verdict }}
+          INTEGRATION_ATTEMPT: ${{ needs.integration.outputs.attempt_verdict }}
+          INTEGRATION_RETRY: ${{ needs.integration.outputs.retry_verdict }}
+        run: |
+          python3 -m tools.sim_gate.gate \
+            --lane "unit=${UNIT_ATTEMPT},${UNIT_RETRY}" \
+            --lane "integration=${INTEGRATION_ATTEMPT},${INTEGRATION_RETRY}"
