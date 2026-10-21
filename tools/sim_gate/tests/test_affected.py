@@ -341,3 +341,14 @@ def test_cli_refuses_an_unknown_ref(repo, capsys):
     assert code == 2
     assert out == ""
     assert "git diff failed" in err
+
+
+@pytest.mark.parametrize("flag", ["--base", "--head"])
+def test_cli_refuses_a_ref_that_looks_like_a_git_option(repo, capsys, flag):
+    other = "HEAD~1" if flag == "--head" else "HEAD"
+    code = affected.main([f"{flag}=--output=leaked", f"--{'base' if flag == '--head' else 'head'}", other])
+    out = capsys.readouterr()
+    assert code == 2
+    assert out.out == ""
+    assert "must not start with '-'" in out.err
+    assert not [p for p in repo.iterdir() if p.name.startswith("leaked")]

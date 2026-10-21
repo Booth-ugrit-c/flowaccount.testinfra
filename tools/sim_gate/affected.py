@@ -206,6 +206,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
+    for flag, ref in (("--base", args.base), ("--head", args.head)):
+        if ref.startswith("-"):
+            print(f"sim_gate.affected: {flag} {ref!r} must not start with '-'", file=sys.stderr)
+            return 2
     cwd = Path.cwd()
     try:
         files = read_projects(args.head, args.root, cwd)
