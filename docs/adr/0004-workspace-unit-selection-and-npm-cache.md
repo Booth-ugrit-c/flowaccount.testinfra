@@ -58,7 +58,7 @@ Selection must-fixes from the first security review:
   - a tracked symlink.
 
   It scans all projects, not only the changed ones and their dependents: an unselected project's hidden reference to a changed project is visible only in the unselected project's own files.
-- `sim/workspace/.npmrc` sets `ignore-scripts=true`. The jobs also point the npm user and global config at `/dev/null`, so a persistent lab runner's `~/.npmrc` cannot change an install or the `npm run` behind each test.
+- `sim/workspace/.npmrc` sets `ignore-scripts=true`. The jobs also point the npm user and global config at two paths under `/dev/null/` that cannot exist (npm refuses `/dev/null` itself for both: it loads one file twice), so a persistent lab runner's `~/.npmrc` cannot change an install or the `npm run` behind each test.
 - `npm audit` reported one high (undici 7.29.0 under nx). nx 23.3.0 and 24.0.0 both pin that exact version, so `package.json` overrides undici to 7.30.1 and the high clears (`npm audit --audit-level=high` exit 1 before, 0 after). The `ci.yml` `workspace` job installs with `--ignore-scripts`, runs `nx run-many -t test --skip-nx-cache`, and runs `npm audit --audit-level=high --package-lock-only` as its own step.
 - The zero-tests guard is per project. `jest_counts.py` writes `numPassedTests + numFailedTests` per project, and `core.zero_tests` turns an all-skipped or report-less project red.
 
