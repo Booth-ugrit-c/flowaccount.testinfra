@@ -42,16 +42,20 @@ def repo(tmp_path_factory):
     pull = commit(upstream, "pull")
     git(upstream, "update-ref", "refs/pull/7/head", pull)
     git(upstream, "branch", "refs/x", main_tip)
+    git(upstream, "checkout", "-q", "-b", "other", first)
+    other = commit(upstream, "other")
     git(upstream, "checkout", "-q", "main")
     clone = root / "clone"
     subprocess.run([*GIT, "clone", "-q", upstream.as_posix(), clone.as_posix()], check=True, capture_output=True)
     git(clone, "fetch", "-q", "origin", "+refs/pull/7/head:refs/remotes/pull/7/head")
-    return {"dir": clone, "first": first, "main": main_tip, "topic": topic, "stray": stray, "pull": pull}
+    return {"dir": clone, "first": first, "main": main_tip, "topic": topic, "stray": stray, "pull": pull, "other": other}
 
 
 @pytest.fixture(params=SHELLS)
 def resolve(repo, tmp_path, request):
-    def run(head, base="origin/main", ref="refs/heads/main", default="main", **inputs):
+    def run(head, base="origin/main", ref=None, default="main", **inputs):
+        if ref is None:
+            ref = f"refs/heads/{head}" if head in ("main", "topic", "other") else "refs/heads/main"
         output = tmp_path / "output.txt"
         output.write_text("")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GITHUB_", "PR_", "BASE_REF", "DEFAULT_BRANCH", "RETEST_OF", "LANES", "KNOWN_LANES"))}
@@ -84,13 +88,46 @@ def test_the_four_pr_inputs_are_carried_into_the_outputs(repo, resolve):
     assert (out["pr_sha"], out["pr_branch"], out["pr_number"], out["pr_author"], out["retest_of"]) == (repo["topic"], "topic", "17", "dependabot[bot]", "39789348836")
 
 
-def test_pr_sha_wins_over_the_branch_tip_when_dispatched_from_another_ref(repo, resolve):
-    proc, out = resolve("main", ref="refs/heads/topic", PR_SHA=repo["first"])
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert out["pr_sha"] == repo["first"] and out["default_tip"] == "false"
-
-
 BINDING = "the tested commit is not the dispatched commit"
+NOT_A_BRANCH = "the gate must be dispatched from a branch"
+
+
+def test_a_pr_branch_left_at_main_on_another_branch_is_refused(repo, resolve):
+    proc, out = resolve("main", ref="refs/heads/topic")
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+def test_a_pr_branch_naming_a_different_branch_is_refused(repo, resolve):
+    proc, out = resolve("other", ref="refs/heads/topic")
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+def test_an_empty_pr_branch_with_another_branch_sha_is_refused(repo, resolve):
+    proc, out = resolve("", ref="refs/heads/topic", PR_SHA=repo["other"])
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+def test_a_dispatch_from_main_naming_another_branch_head_is_refused(repo, resolve):
+    proc, out = resolve("topic", ref="refs/heads/main", PR_SHA=repo["topic"])
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+@pytest.mark.parametrize("sha", ["first", "topic"])
+def test_a_tag_dispatch_is_refused_even_at_the_tested_commit(repo, resolve, sha):
+    proc, out = resolve("topic", ref="refs/tags/v1", GITHUB_SHA=repo["topic"], PR_SHA=repo[sha])
+    assert proc.returncode != 0 and out == {}
+    assert NOT_A_BRANCH in proc.stdout
+
+
+@pytest.mark.parametrize("ref", ["", "refs/heads/", "refs/pull/7/merge"])
+def test_a_dispatch_ref_that_is_not_a_branch_is_refused(repo, resolve, ref):
+    proc, out = resolve("topic", ref=ref, GITHUB_SHA=repo["topic"])
+    assert proc.returncode != 0 and out == {}
+    assert NOT_A_BRANCH in proc.stdout
 
 
 def test_an_older_pr_sha_dispatched_on_the_pr_branch_is_refused(repo, resolve):
@@ -124,7 +161,7 @@ def test_a_dispatch_without_the_dispatched_commit_is_refused_on_the_pr_branch(re
 
 
 def test_pr_sha_alone_resolves_when_it_is_on_a_branch(repo, resolve):
-    proc, out = resolve("", PR_SHA=repo["topic"])
+    proc, out = resolve("", ref="refs/heads/topic", PR_SHA=repo["topic"])
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["pr_sha"] == repo["topic"] and out["pr_branch"] == ""
 
@@ -134,12 +171,6 @@ def test_pr_sha_must_be_an_ancestor_of_pr_branch(repo, resolve, branch, which):
     proc, out = resolve(branch, PR_SHA=repo[which])
     assert proc.returncode != 0 and out == {}
     assert "::error::" in proc.stdout
-
-
-def test_pr_sha_on_pr_branch_is_accepted_below_the_tip(repo, resolve):
-    proc, out = resolve("topic", PR_SHA=repo["first"])
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert out["pr_sha"] == repo["first"]
 
 
 def test_a_pr_branch_that_does_not_exist_is_refused_even_with_a_valid_sha(repo, resolve):
@@ -237,17 +268,23 @@ def test_the_full_sha_of_the_default_tip_is_the_default_tip_too(repo, resolve):
     assert out["pr_sha"] == repo["main"] and out["default_tip"] == "true"
 
 
-@pytest.mark.parametrize("ref", ["refs/heads/topic", "refs/tags/main", "refs/heads/MAIN", "refs/heads/Main", ""])
-def test_the_default_tip_needs_a_dispatch_from_the_default_branch_itself(resolve, ref):
-    proc, out = resolve("main", ref=ref)
+@pytest.mark.parametrize("ref", ["refs/heads/topic", "refs/heads/MAIN", "refs/heads/Main"])
+def test_the_default_tip_needs_a_dispatch_from_the_default_branch_itself(repo, resolve, ref):
+    proc, out = resolve("main", ref=ref, GITHUB_SHA=repo["main"])
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["default_tip"] == "false"
 
 
-def test_an_older_commit_of_the_default_branch_runs_but_is_not_the_tip(repo, resolve):
+@pytest.mark.parametrize("ref", ["refs/tags/main", ""])
+def test_the_default_tip_from_a_tag_or_no_ref_is_refused(repo, resolve, ref):
+    proc, out = resolve("main", ref=ref, GITHUB_SHA=repo["main"])
+    assert proc.returncode != 0 and out == {}
+
+
+def test_an_older_commit_of_the_default_branch_is_refused_from_the_default_branch(repo, resolve):
     proc, out = resolve(repo["first"])
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert out["pr_sha"] == repo["first"] and out["default_tip"] == "false"
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
 
 
 @pytest.mark.parametrize(
