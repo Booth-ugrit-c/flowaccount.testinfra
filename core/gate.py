@@ -110,7 +110,9 @@ def overall(lanes, reasons=None, retest=False):
     return RED_TEST if worst == NOT_RUN else worst
 
 
-def retest_lanes(lanes):
+def retest_lanes(lanes, reasons=None):
+    if TRIPWIRE_REASON in (reasons or {}).values():
+        return []
     judged = verdicts(lanes)
     infra = [name for name, verdict in judged if verdict == "infra"]
     upstream = BUILD in infra
@@ -147,7 +149,7 @@ def state(lanes, reasons, executed, retest, verdict, stack, retest_of, inputs, e
         "retest": retest,
         "retest_of": text(retest_of, f"({RUN_ID})?", "retest_of"),
         "result": verdict,
-        "retest_lanes": retest_lanes(lanes),
+        "retest_lanes": retest_lanes(lanes, reasons),
         "inputs": {key: text(inputs[key], pattern, f"inputs.{key}") for key, pattern in INPUT_FIELDS.items()},
         "lanes": [
             {"name": name, "verdict": judged, "reason": reasons.get(name, ""), "executed": executed.get(name)}
@@ -210,7 +212,7 @@ def main(argv):
         Path(args.verdict_file).parent.mkdir(parents=True, exist_ok=True)
         Path(args.verdict_file).write_bytes(data)
     append("GITHUB_STEP_SUMMARY", summary(args.lane, verdict, reasons, executed, args.retest))
-    append("GITHUB_OUTPUT", f"retest_lanes={','.join(retest_lanes(args.lane))}\n")
+    append("GITHUB_OUTPUT", f"retest_lanes={','.join(retest_lanes(args.lane, reasons))}\n")
     print(f"gate: {verdict}")
     return 0 if verdict == PASS else 1
 

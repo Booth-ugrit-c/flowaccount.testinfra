@@ -88,6 +88,22 @@ def test_only_the_infra_lane_is_retested_after_a_passing_build():
     assert gate.retest_lanes([("build", "pass"), ("unit", "infra"), ("integration", "pass")]) == ["unit"]
 
 
+@pytest.mark.parametrize(
+    "lanes, reasons",
+    [
+        ([("build", "pass"), ("unit", "infra"), ("integration", "pass")], {"unit": "cache tripwire"}),
+        ([("build", "pass"), ("unit", "infra"), ("integration", "infra")], {"unit": "cache tripwire"}),
+        ([("build", "infra"), ("unit", ""), ("integration", "")], {"build": "cache tripwire"}),
+    ],
+)
+def test_a_tripped_cache_retests_nothing(lanes, reasons):
+    assert gate.retest_lanes(lanes, reasons) == []
+
+
+def test_a_named_cause_other_than_the_tripwire_is_still_retested():
+    assert gate.retest_lanes([("build", "pass"), ("unit", "infra")], {"unit": "other cause"}) == ["unit"]
+
+
 def test_a_retest_turns_infra_into_twice():
     assert gate.overall([("build", "pass"), ("unit", "infra")], retest=True) == INFRA_TWICE
     assert gate.overall([("build", "infra"), ("unit", "")], retest=True) == INFRA_TWICE
@@ -292,6 +308,13 @@ def test_the_verdict_file_after_a_build_infra_failure_lists_every_lane_for_retes
     document = json.loads((tmp_path / "out" / "verdict.json").read_text(encoding="utf-8"))
     assert document["retest_lanes"] == ["build", "unit", "integration"]
     assert [lane["verdict"] for lane in document["lanes"]] == ["infra", "none", "none"]
+
+
+def test_the_verdict_file_and_output_retest_nothing_after_a_tripwire(tmp_path):
+    out = run_cli(verdict_args(tmp_path, ["build=infra", "unit=", "integration="]) + ["--reason", "build=cache tripwire"], tmp_path, **RUN)
+    assert out.stdout.strip() == f"gate: {TRIPWIRE}"
+    assert json.loads((tmp_path / "out" / "verdict.json").read_text(encoding="utf-8"))["retest_lanes"] == []
+    assert (tmp_path / "output.txt").read_text() == "retest_lanes=\n"
 
 
 def test_a_retest_run_is_recorded_as_one(tmp_path):
