@@ -31,6 +31,53 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+  dotnet:
+    name: dotnet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: sim/dotnet
+    services:
+      sql:
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_PASSWORD: workload
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      cache:
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: sim/dotnet/global.json
+      - name: Build
+        run: dotnet build -c Release --nologo
+      - name: Unit tests
+        run: dotnet test -c Release --no-build --nologo --filter "Category!=integration"
+      - name: Integration tests
+        env:
+          SIM_SQL_HOST: localhost
+          SIM_CACHE_HOST: localhost
+        run: dotnet test -c Release --no-build --nologo --filter "Category=integration"
+
   workflow-lint:
     name: workflow-lint
     runs-on: ubuntu-24.04
