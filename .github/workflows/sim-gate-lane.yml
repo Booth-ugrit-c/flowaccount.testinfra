@@ -12,6 +12,11 @@ on:
       head:
         required: true
         type: string
+      default_tip:
+        description: True only when validate resolved head to the default branch tip on a dispatch from the default branch
+        required: false
+        default: false
+        type: boolean
       fail_test:
         required: false
         default: false
@@ -87,6 +92,7 @@ jobs:
       lane: ${{ inputs.lane }}
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
+      default_tip: ${{ inputs.default_tip }}
       runner: ${{ needs.route.outputs.target == 'onprem' && inputs.lab_label || 'ubuntu-24.04' }}
       hosted: ${{ needs.route.outputs.target != 'onprem' || inputs.lab_label == '' }}
       fail_test: ${{ inputs.fail_test }}
@@ -109,6 +115,7 @@ jobs:
       lane: ${{ inputs.lane }}
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
+      default_tip: ${{ inputs.default_tip }}
       runner: ubuntu-24.04
       hosted: true
       fail_test: ${{ inputs.fail_test }}

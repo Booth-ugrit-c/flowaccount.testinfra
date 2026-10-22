@@ -32,15 +32,32 @@ else
     unset SIM_CACHE_ENDPOINT
 fi
 
+cache_off() {
+    : > "$1/cache-off"
+    echo "::warning title=cache off::$2; this run builds without the cache"
+    [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf 'cache off: %s\n' "$2" >> "$GITHUB_STEP_SUMMARY"
+}
+
+if [ -n "${MARKERS:-}" ] && [ -e "$MARKERS/cache-off" ]; then
+    SIM_CACHE_MODE=off
+fi
+
 mode=${1:-}
 case $mode in
     tripwire)
         markers=${2:?usage: cache_build.sh tripwire MARKERS_DIR}
         mkdir -p "$markers"
-        cache tripwire --markers "$markers" || true
-        if [ -e "$markers/cache-tripwire" ]; then
+        if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] && [ "${SIM_TAILNET_JOIN:-}" != success ]; then
+            cache_off "$markers" "the tailnet join failed"
+            exit 0
+        fi
+        answer=$(cache tripwire --markers "$markers") || answer=
+        if [ "$answer" = tripped ] || [ -e "$markers/cache-tripwire" ]; then
             echo "cache: the store reports a tripwire; stopping before any build" >&2
             exit 1
+        fi
+        if [ "$answer" != clear ]; then
+            cache_off "$markers" "the store did not answer the tripwire check"
         fi
         ;;
     build)
@@ -79,7 +96,7 @@ case $mode in
             echo "skip: not the default branch tip"
             exit 0
         fi
-        dirty=$(git status --porcelain --untracked-files=all | grep -Ev '^.. (.*/)?(bin|obj)/' || true)
+        dirty=$(git status --porcelain --untracked-files=all | grep -Ev '^\?\? (.*/)?(bin|obj)/' || true)
         if [ -n "$dirty" ]; then
             echo "cache: no save, the tree has untracked or modified files outside bin and obj"
             exit 0

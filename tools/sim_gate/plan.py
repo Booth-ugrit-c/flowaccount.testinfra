@@ -48,7 +48,9 @@ def build_plan(graph: dict, tests: Sequence[str]) -> list:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.sim_gate.plan")
-    parser.add_argument("--affected", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--affected")
+    source.add_argument("--all", action="store_true")
     parser.add_argument("--lane", required=True, choices=LANES)
     parser.add_argument("--emit", required=True, choices=("build", "test"))
     parser.add_argument("--root", default=affected.DEFAULT_ROOT)
@@ -58,7 +60,12 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        selection = json.loads(Path(args.affected).read_text(encoding="utf-8"))
+        if args.all:
+            graph = read_graph(args.root, Path.cwd())
+            order = affected.topological_order(graph)
+            selection = {"build": order, "test": [path for path in order if graph[path].is_test]}
+        else:
+            selection = json.loads(Path(args.affected).read_text(encoding="utf-8"))
         tests = lane_tests([str(path) for path in selection["test"]], args.lane)
         if args.emit == "build":
             seeds = tests + (unit_extras(selection["build"]) if args.lane == "unit" else [])

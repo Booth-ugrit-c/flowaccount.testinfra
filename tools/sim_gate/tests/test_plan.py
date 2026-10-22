@@ -145,3 +145,39 @@ def test_the_integration_lane_stays_seeded_by_its_tests_only(tmp_path):
 def test_an_unknown_project_in_the_build_list_is_refused(tmp_path):
     proc = run(tmp_path, {"build": ["sim/dotnet/src/Ghost/Ghost.csproj"], "test": []}, "unit", "build")
     assert proc.returncode == 2 and b"Ghost" in proc.stderr
+
+
+def run_all(lane, emit, *extra):
+    return subprocess.run(
+        [sys.executable, "-m", "tools.sim_gate.plan", "--all", "--lane", lane, "--emit", emit, *extra],
+        capture_output=True,
+        cwd=REPO_ROOT,
+        timeout=60,
+    )
+
+
+def test_a_full_unit_plan_builds_every_project_but_the_integration_tests():
+    assert set(lines(run_all("unit", "build"))) == {
+        CORE, DATA, UTILS, OTHER, SERVICE, API, SUPPORT, CORE_TESTS, OTHER_TESTS, SERVICE_TESTS,
+    }
+
+
+def test_a_full_integration_plan_builds_the_integration_tests_and_their_closure():
+    assert set(lines(run_all("integration", "build"))) == {API_INTEGRATION, API, SERVICE, CORE, UTILS, DATA, SUPPORT}
+
+
+def test_a_full_plan_tests_every_test_project_of_the_lane():
+    assert set(lines(run_all("unit", "test"))) == {CORE_TESTS, OTHER_TESTS, SERVICE_TESTS}
+    assert lines(run_all("integration", "test")) == [API_INTEGRATION]
+
+
+def test_a_full_plan_keeps_dependency_order():
+    plan_ = lines(run_all("unit", "build"))
+    assert plan_.index(CORE) < plan_.index(DATA) < plan_.index(SERVICE) < plan_.index(API)
+    assert plan_.index(SUPPORT) < plan_.index(CORE_TESTS)
+
+
+def test_the_full_plan_and_an_affected_file_are_exclusive(tmp_path):
+    path = tmp_path / "affected.json"
+    path.write_text(json.dumps({"build": [], "test": []}), encoding="utf-8")
+    assert run_all("unit", "build", "--affected", str(path)).returncode != 0

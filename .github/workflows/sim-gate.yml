@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: Base git ref for the affected selection
+        description: Base for the affected selection, a branch or a commit on a branch of this repository
         required: false
         default: origin/main
         type: string
       head:
-        description: Branch, tag or full SHA that is both built and used for the affected selection
+        description: Branch of this repository or a full commit SHA on one, both built and used for the affected selection
         required: false
         default: main
         type: string
@@ -38,21 +38,23 @@ jobs:
     name: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+      default_tip: ${{ steps.resolve.outputs.default_tip }}
     steps:
-      - name: Validate refs
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve refs
+        id: resolve
         env:
           BASE_REF: ${{ inputs.base }}
           HEAD_REF: ${{ inputs.head }}
-        run: |
-          set -eu
-          for ref in "$BASE_REF" "$HEAD_REF"; do
-              case "$ref" in
-                  '' | -* | *[!A-Za-z0-9._/~^@-]*)
-                      echo "::error::a ref is empty, starts with a dash or has characters outside A-Za-z0-9._/~^@-"
-                      exit 1
-                      ;;
-              esac
-          done
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: sh tools/sim_gate/resolve_refs.sh
 
   unit:
     name: unit
@@ -65,8 +67,9 @@ jobs:
     uses: ./.github/workflows/sim-gate-lane.yml # zizmor: ignore[self-repository]
     with:
       lane: unit
-      base: ${{ inputs.base }}
-      head: ${{ inputs.head }}
+      base: ${{ needs.validate.outputs.base_sha }}
+      head: ${{ needs.validate.outputs.head_sha }}
+      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}
       fail_test: ${{ inputs.fail_test }}
       simulate_kill: ${{ inputs.simulate_kill }}
       lab_label: ${{ vars.SIM_LAB_LABEL_UNIT }}
@@ -82,8 +85,9 @@ jobs:
     uses: ./.github/workflows/sim-gate-lane.yml # zizmor: ignore[self-repository]
     with:
       lane: integration
-      base: ${{ inputs.base }}
-      head: ${{ inputs.head }}
+      base: ${{ needs.validate.outputs.base_sha }}
+      head: ${{ needs.validate.outputs.head_sha }}
+      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}
       fail_test: ${{ inputs.fail_test }}
       simulate_kill: ${{ inputs.simulate_kill }}
       lab_label: ${{ vars.SIM_LAB_LABEL_INTEGRATION }}

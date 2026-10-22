@@ -207,6 +207,8 @@ def test_the_tripwire_check_passes_when_the_store_is_clear(lab):
     assert result.returncode == 0
     assert lab.cache_calls() == ["tripwire "]
     assert not (lab.t / "markers" / "cache-tripwire").exists()
+    assert not (lab.t / "markers" / "cache-off").exists()
+    assert "::warning" not in result.stdout
 
 
 def test_a_tripped_store_fails_the_step_and_leaves_the_marker(lab):
@@ -216,12 +218,81 @@ def test_a_tripped_store_fails_the_step_and_leaves_the_marker(lab):
     assert (lab.t / "markers" / "cache-tripwire").exists()
 
 
-@pytest.mark.parametrize("answer", ["- 2", "- 1"])
-def test_a_store_that_cannot_be_asked_is_not_a_trip(lab, answer):
-    lab.table([f"tripwire - {answer}"])
+def test_a_tripped_answer_stops_the_step_even_without_the_marker(lab):
+    lab.table(["tripwire - tripped 0"])
+    (lab.t / "cache").write_bytes(FAKE_CACHE.replace(': > "$markers/cache-tripwire"', ":").encode())
     result = lab.run("tripwire", (lab.t / "markers").as_posix())
+    assert result.returncode != 0
+    assert not (lab.t / "markers" / "cache-off").exists()
+
+
+@pytest.mark.parametrize("answer", ["- 2", "- 1", "- 0", "garbage 0", "CLEAR 0"])
+def test_a_store_that_cannot_be_asked_is_not_a_trip_but_turns_the_cache_off_loudly(lab, answer):
+    lab.table([f"tripwire - {answer}"])
+    summary = lab.t / "summary.md"
+    result = lab.run("tripwire", (lab.t / "markers").as_posix(), GITHUB_STEP_SUMMARY=summary.as_posix())
     assert result.returncode == 0
     assert not (lab.t / "markers" / "cache-tripwire").exists()
+    assert (lab.t / "markers" / "cache-off").exists()
+    assert "::warning title=cache off::the store did not answer the tripwire check" in result.stdout
+    assert summary.read_text().startswith("cache off: ")
+
+
+@pytest.mark.parametrize("join", [None, "", "failure", "skipped", "cancelled"])
+def test_a_hosted_runner_whose_tailnet_join_failed_never_asks_the_store(lab, join):
+    lab.table(["tripwire - clear 0"])
+    result = lab.run("tripwire", (lab.t / "markers").as_posix(), RUNNER_ENVIRONMENT="github-hosted", SIM_TAILNET_JOIN=join)
+    assert result.returncode == 0
+    assert lab.cache_calls() == []
+    assert (lab.t / "markers" / "cache-off").exists()
+    assert "::warning title=cache off::the tailnet join failed" in result.stdout
+
+
+def test_a_hosted_runner_that_joined_asks_the_store(lab):
+    lab.table(["tripwire - clear 0"])
+    result = lab.run("tripwire", (lab.t / "markers").as_posix(), RUNNER_ENVIRONMENT="github-hosted", SIM_TAILNET_JOIN="success")
+    assert result.returncode == 0
+    assert lab.cache_calls() == ["tripwire "]
+    assert not (lab.t / "markers" / "cache-off").exists()
+
+
+def test_a_lab_runner_ignores_the_tailnet_join_outcome(lab):
+    lab.table(["tripwire - clear 0"])
+    result = lab.run("tripwire", (lab.t / "markers").as_posix(), SIM_TAILNET_JOIN="failure")
+    assert result.returncode == 0
+    assert lab.cache_calls() == ["tripwire "]
+
+
+def cache_off_markers(lab):
+    markers = lab.t / "markers"
+    markers.mkdir(exist_ok=True)
+    (markers / "cache-off").write_text("")
+    return markers.as_posix()
+
+
+def test_with_the_cache_off_marker_the_build_never_asks_the_store(lab):
+    lab.table(["restore Core hit 0", "restore Utils hit 0"])
+    result = lab.run("build", lab.plan(CORE, UTILS), (lab.t / "built.txt").as_posix(), MARKERS=cache_off_markers(lab))
+    assert result.returncode == 0, result.stderr
+    assert lab.cache_calls() == []
+    assert lab.built() == [CORE, UTILS]
+
+
+def test_with_the_cache_off_marker_nothing_is_saved(lab):
+    result = lab.run("save", lab.write_built(CORE), MARKERS=cache_off_markers(lab))
+    assert result.returncode == 0
+    assert lab.cache_calls() == []
+
+
+def test_a_failed_join_then_build_then_save_is_a_cold_build_that_never_touches_the_store(lab):
+    lab.table(["tripwire - clear 0", "restore Core hit 0", "save Core saved 0"])
+    markers = (lab.t / "markers").as_posix()
+    hosted = dict(RUNNER_ENVIRONMENT="github-hosted", SIM_TAILNET_JOIN="failure", MARKERS=markers)
+    assert lab.run("tripwire", markers, **hosted).returncode == 0
+    assert lab.run("build", lab.plan(CORE), (lab.t / "built.txt").as_posix(), **hosted).returncode == 0
+    assert lab.run("save", (lab.t / "built.txt").as_posix(), **hosted).returncode == 0
+    assert lab.cache_calls() == []
+    assert lab.built() == [CORE]
 
 
 def test_a_clean_tree_saves_every_built_project_in_order(lab):
@@ -333,3 +404,17 @@ def test_a_branch_tip_elsewhere_does_not_authorise_the_save(lab):
     assert lab.cache_calls() == ["save Core"]
     result = lab.run("save", lab.write_built(CORE))
     assert lab.cache_calls() == ["save Core"]
+
+
+def test_a_modified_tracked_file_under_a_directory_named_bin_stops_the_save(lab):
+    tracked = lab.workspace / "tools" / "bin" / "run.sh"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("x")
+    subprocess.run([*lab.git, "add", "-A"], cwd=lab.workspace, check=True)
+    subprocess.run([*lab.git, "commit", "-q", "-m", "tracked bin"], cwd=lab.workspace, check=True)
+    subprocess.run([*lab.git, "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=lab.workspace, check=True)
+    tracked.write_text("changed")
+    lab.table(["save Core saved 0"])
+    result = lab.run("save", lab.write_built(CORE))
+    assert result.returncode == 0
+    assert lab.cache_calls() == []

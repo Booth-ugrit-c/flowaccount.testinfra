@@ -294,6 +294,9 @@ ID_TOKEN_PLACES = {
 }
 WRITE_ENVIRONMENT = "sim-cache-write"
 READ_ENVIRONMENT = "sim-cache-read"
+LAB_ENVIRONMENT = "sim-cache-lab"
+JOIN_STEP = "Join the tailnet"
+FULL_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 def in_attempt_run_step(name, path, section):
@@ -332,13 +335,17 @@ def secret_violations(docs):
 
 
 SAVE_BASE = {"github.event.repository.default_branch": "main", "inputs.fail_test": False, "runner.environment": "github-hosted"}
-SAVE_OK = dict(SAVE_BASE, **{"github.ref": "refs/heads/main", "github.ref_name": "main", "inputs.head": "main"})
+SAVE_OK = dict(SAVE_BASE, **{"github.ref": "refs/heads/main", "github.ref_name": "main", "inputs.head": FULL_SHA, "inputs.default_tip": True})
 SAVE_REFUSED = [
     dict(SAVE_OK, **{"github.ref": "refs/heads/topic", "github.ref_name": "topic"}),
     dict(SAVE_OK, **{"github.ref": "refs/tags/main", "github.ref_name": "main"}),
-    dict(SAVE_OK, **{"inputs.head": "topic"}),
+    dict(SAVE_OK, **{"inputs.default_tip": False}),
+    dict(SAVE_OK, **{"inputs.head": "main", "inputs.default_tip": False}),
+    dict(SAVE_OK, **{"inputs.head": "MAIN", "inputs.default_tip": False}),
+    dict(SAVE_OK, **{"inputs.head": "topic", "inputs.default_tip": False}),
     dict(SAVE_OK, **{"runner.environment": "self-hosted"}),
 ]
+NAME_COMPARE = "inputs.head"
 
 
 def default_branch_only(guard):
@@ -359,18 +366,26 @@ def environment_violations(docs):
     expression = run.get("environment")
     if not isinstance(expression, str):
         return ["the attempt run job must choose its environment with an expression"]
+    if NAME_COMPARE in expression:
+        found.append("the attempt environment must not compare inputs.head by name; names compare case-insensitively, use inputs.default_tip")
     base = {"github.event.repository.default_branch": "main"}
     for ref in ("refs/heads/main", "refs/heads/topic", "refs/tags/main", "refs/heads/main2"):
-        for head in ("main", "topic"):
-            for fail_test in (False, True):
-                for hosted in (True, False):
-                    context = dict(base, **{"github.ref": ref, "github.ref_name": ref.rsplit("/", 1)[-1], "inputs.head": head, "inputs.fail_test": fail_test, "inputs.hosted": hosted})
-                    chosen = evaluate(expression, context)
-                    wanted = WRITE_ENVIRONMENT if (ref, head, fail_test, hosted) == ("refs/heads/main", "main", False, True) else READ_ENVIRONMENT
-                    if chosen != wanted:
-                        found.append(
-                            f"the attempt environment is {chosen!r} for ref {ref}, head {head}, fail_test {fail_test}, hosted {hosted}; wanted {wanted!r}"
-                        )
+        for head in ("main", "MAIN", "topic", FULL_SHA):
+            for default_tip in (False, True):
+                for fail_test in (False, True):
+                    for hosted in (True, False):
+                        context = dict(base, **{"github.ref": ref, "github.ref_name": ref.rsplit("/", 1)[-1], "inputs.head": head, "inputs.default_tip": default_tip, "inputs.fail_test": fail_test, "inputs.hosted": hosted})
+                        chosen = evaluate(expression, context)
+                        if not hosted:
+                            wanted = LAB_ENVIRONMENT
+                        elif (ref, default_tip, fail_test) == ("refs/heads/main", True, False):
+                            wanted = WRITE_ENVIRONMENT
+                        else:
+                            wanted = READ_ENVIRONMENT
+                        if chosen != wanted:
+                            found.append(
+                                f"the attempt environment is {chosen!r} for ref {ref}, head {head}, default_tip {default_tip}, fail_test {fail_test}, hosted {hosted}; wanted {wanted!r}"
+                            )
     if run.get("permissions") != {"contents": "read", "id-token": "write"}:
         found.append("the attempt run job must have exactly contents: read and id-token: write")
     classify = docs[ATTEMPT]["jobs"]["classify"]
@@ -416,6 +431,8 @@ def cache_wiring_violations(docs):
                 found.append("the tailscale action must not use its binary cache")
         if WRITER_PREFIX in str(step):
             guard = step.get("if")
+            if NAME_COMPARE in str(guard):
+                found.append("the cache save guard must not compare inputs.head by name; names compare case-insensitively, use inputs.default_tip")
             if guard is None or not default_branch_only(str(guard)):
                 found.append("a step reading the cache writer key must itself be gated on the default branch")
             elif truthy(evaluate(condition(str(guard)), dict(SAVE_OK, **{"inputs.fail_test": True}))):
@@ -435,8 +452,17 @@ def cache_wiring_violations(docs):
             found.append(f"the cache tripwire step must come after {early}")
     if "Join the tailnet" in names and "Cache tripwire" in names and names.index("Join the tailnet") > names.index("Cache tripwire"):
         found.append("the tailnet must be joined before the cache tripwire step")
-    if "Join the tailnet" not in names:
+    if JOIN_STEP not in names:
         found.append("the attempt job has no step that joins the tailnet on hosted runners")
+    else:
+        join = steps[names.index(JOIN_STEP)]
+        if join.get("continue-on-error") != "true":
+            found.append("the tailnet join must be continue-on-error: true; a failed join costs a cold build, never a red lane")
+        if join.get("id") != "join":
+            found.append("the tailnet join step must have id: join")
+    if "Cache tripwire" in names and steps[names.index("Cache tripwire")].get("env", {}).get("SIM_TAILNET_JOIN") != "${{ steps.join.outcome }}":
+        found.append("the cache tripwire step must pass SIM_TAILNET_JOIN: ${{ steps.join.outcome }}")
+    found += full_plan_violations(steps, names)
     build = steps[names.index("Build")] if "Build" in names else {}
     if "cache_build.sh build" not in str(build.get("run", "")):
         found.append("the Build step must go through cache_build.sh build")
@@ -448,6 +474,71 @@ def cache_wiring_violations(docs):
                         found.append(f"{name}: dotnet test without --no-build would rebuild restored projects: {line.strip()}")
                     if re.search(r"\bdotnet\s+build\b", line):
                         found.append(f"{name}: dotnet build outside cache_build.sh bypasses the cache: {line.strip()}")
+    return found
+
+
+def full_plan_violations(steps, names):
+    if "Plan" not in names:
+        return ["the attempt job has no Plan step"]
+    plan = steps[names.index("Plan")]
+    save = next((st for st in steps if WRITER_PREFIX in str(st)), None)
+    full = plan.get("env", {}).get("FULL")
+    if save is None or full is None:
+        return ["the Plan step must take FULL from the same condition as the cache save step"]
+    found = []
+    for context in (SAVE_OK, *SAVE_REFUSED, dict(SAVE_OK, **{"inputs.fail_test": True})):
+        if (evaluate(full, context) == "1") != truthy(evaluate(condition(str(save.get("if"))), context)):
+            found.append(f"the Plan step must plan the whole lane exactly when the cache saves; they differ for {context}")
+            break
+    run = str(plan.get("run", ""))
+    if '[ "$FULL" = 1 ]' not in run or "set -- --all" not in run:
+        found.append("the Plan step must pass --all when FULL is 1")
+    return found
+
+
+def validate_violations(docs):
+    jobs = docs["sim-gate.yml"]["jobs"]
+    validate = jobs["validate"]
+    found = []
+    steps = validate.get("steps", [])
+    checkouts = [i for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/checkout@")]
+    resolves = [i for i, st in enumerate(steps) if st.get("id") == "resolve"]
+    options = steps[checkouts[0]].get("with", {}) if checkouts else {}
+    if not checkouts or "ref" in options or str(options.get("fetch-depth")) != "0" or str(options.get("persist-credentials")) != "false":
+        found.append("validate must check out the dispatch commit itself with fetch-depth: 0 and persist-credentials: false")
+    wanted_env = {
+        "HEAD_REF": "${{ inputs.head }}",
+        "BASE_REF": "${{ inputs.base }}",
+        "DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+    }
+    resolve = steps[resolves[0]] if resolves else {}
+    if str(resolve.get("run", "")).strip() != "sh tools/sim_gate/resolve_refs.sh" or resolve.get("env") != wanted_env:
+        found.append("validate must resolve head and base with sh tools/sim_gate/resolve_refs.sh")
+    elif not checkouts or resolves[0] < checkouts[0]:
+        found.append("validate must check out before it resolves")
+    outputs = {name: f"${{{{ steps.resolve.outputs.{name} }}}}" for name in ("head_sha", "base_sha", "default_tip")}
+    if validate.get("outputs") != outputs:
+        found.append("validate must output head_sha, base_sha and default_tip from the resolve step")
+    wanted_with = {
+        "head": "${{ needs.validate.outputs.head_sha }}",
+        "base": "${{ needs.validate.outputs.base_sha }}",
+        "default_tip": "${{ needs.validate.outputs.default_tip == 'true' }}",
+    }
+    for lane in ("unit", "integration"):
+        given = {key: jobs[lane].get("with", {}).get(key) for key in wanted_with}
+        if given != wanted_with:
+            found.append(f"lane {lane} must take head, base and default_tip from validate only, has {given}")
+    for job_id, job in jobs.items():
+        if job_id == "validate":
+            continue
+        for path, value in walk(job):
+            if re.search(r"\binputs\.(head|base)\b", str(value)):
+                found.append(f"sim-gate.yml: job {job_id} reads the unresolved ref at {'.'.join(map(str, path))}; use needs.validate.outputs")
+    lane_jobs = docs["sim-gate-lane.yml"]["jobs"]
+    for caller in ("attempt", "retry"):
+        given = lane_jobs[caller].get("with", {})
+        if given.get("head") != "${{ inputs.head }}" or given.get("default_tip") != "${{ inputs.default_tip }}":
+            found.append(f"the lane {caller} must pass head and default_tip through unchanged")
     return found
 
 
@@ -515,7 +606,10 @@ def violations(directory):
                 found.append(f"{name}: permission {'.'.join(map(str, path))} is {value}")
             if "github.ref_name" in text:
                 found.append(f"{name}: github.ref_name is refused at {'.'.join(map(str, path))}; a tag can carry the branch name, compare github.ref")
-            if path[-1:] == ("continue-on-error",):
+            if path[-1:] == ("continue-on-error",) and not (
+                name == ATTEMPT and path[:3] == ("jobs", "run", "steps") and len(path) == 5
+                and doc["jobs"]["run"]["steps"][path[3]].get("name") == JOIN_STEP
+            ):
                 found.append(f"{name}: continue-on-error at {'.'.join(map(str, path))}")
             if path[-1:] == ("secrets",) and value == "inherit":
                 found.append(f"{name}: secrets: inherit at {'.'.join(map(str, path))}")
@@ -542,6 +636,7 @@ def violations(directory):
         found.append(f"{TOKEN_NAME} must appear in exactly one step")
 
     found += lane_label_violations(docs)
+    found += validate_violations(docs)
     found += checkout_violations(docs)
     found += secret_violations(docs)
     found += hygiene_violations(docs)

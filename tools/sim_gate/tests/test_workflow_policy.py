@@ -12,6 +12,7 @@ LANE = "sim-gate-lane.yml"
 ATTEMPT = "sim-gate-attempt.yml"
 TOP = "sim-gate.yml"
 SHA = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+ENVIRONMENT = "    environment: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n"
 
 
 def test_the_shipped_workflows_satisfy_the_policy():
@@ -181,6 +182,96 @@ MUTATIONS = {
         "on:\n  pull_request:\n  workflow_dispatch:",
         "workflow_dispatch only",
     ),
+    "the tailnet join failing the lane": (
+        ATTEMPT,
+        "        continue-on-error: true\n        uses: tailscale/github-action@",
+        "        uses: tailscale/github-action@",
+        "the tailnet join must be continue-on-error: true",
+    ),
+    "the tailnet join without its id": (
+        ATTEMPT,
+        "        id: join\n",
+        "",
+        "must have id: join",
+    ),
+    "the tripwire step blind to the join outcome": (
+        ATTEMPT,
+        "          SIM_TAILNET_JOIN: ${{ steps.join.outcome }}\n",
+        "",
+        "must pass SIM_TAILNET_JOIN",
+    ),
+    "continue-on-error on a step other than the tailnet join": (
+        ATTEMPT,
+        "      - name: Build\n",
+        "      - name: Build\n        continue-on-error: true\n",
+        "continue-on-error at jobs.run.steps",
+    ),
+    "the plan never planning the whole lane": (
+        ATTEMPT,
+        "          FULL: ${{ inputs.default_tip && ",
+        "          FULL: ${{ false && ",
+        "plan the whole lane exactly when the cache saves",
+    ),
+    "the plan planning the whole lane off the default branch tip": (
+        ATTEMPT,
+        "          FULL: ${{ inputs.default_tip && ",
+        "          FULL: ${{ ",
+        "plan the whole lane exactly when the cache saves",
+    ),
+    "the plan ignoring FULL": (
+        ATTEMPT,
+        "              set -- --all\n",
+        "              set -- --affected \"$RUNNER_TEMP/affected.json\"\n",
+        "must pass --all when FULL is 1",
+    ),
+    "validate back to a character check that admits pull request refs": (
+        TOP,
+        "        run: sh tools/sim_gate/resolve_refs.sh\n",
+        "        run: echo ok\n",
+        "validate must resolve head and base with sh tools/sim_gate/resolve_refs.sh",
+    ),
+    "validate checking out the requested head instead of the dispatch commit": (
+        TOP,
+        "          fetch-depth: 0\n          persist-credentials: false\n      - name: Resolve refs",
+        "          ref: ${{ inputs.head }}\n          fetch-depth: 0\n          persist-credentials: false\n      - name: Resolve refs",
+        "validate must check out the dispatch commit itself",
+    ),
+    "validate without the full history to check branch containment": (
+        TOP,
+        "          fetch-depth: 0\n          persist-credentials: false\n      - name: Resolve refs",
+        "          persist-credentials: false\n      - name: Resolve refs",
+        "validate must check out the dispatch commit itself",
+    ),
+    "validate not publishing the resolved head": (
+        TOP,
+        "      head_sha: ${{ steps.resolve.outputs.head_sha }}\n",
+        "      head_sha: ${{ inputs.head }}\n",
+        "validate must output head_sha, base_sha and default_tip",
+    ),
+    "the unit lane given the unresolved head": (
+        TOP,
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.head_sha }}\n",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ inputs.head }}\n",
+        "job unit reads the unresolved ref",
+    ),
+    "the integration lane given the unresolved base": (
+        TOP,
+        "      lane: integration\n      base: ${{ needs.validate.outputs.base_sha }}\n",
+        "      lane: integration\n      base: ${{ inputs.base }}\n",
+        "lane integration must take head, base and default_tip from validate only",
+    ),
+    "a lane told it is the default tip without validate": (
+        TOP,
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.head_sha }}\n      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.head_sha }}\n      default_tip: true\n",
+        "lane unit must take head, base and default_tip from validate only",
+    ),
+    "the lane attempt claiming the default tip": (
+        LANE,
+        "      default_tip: ${{ inputs.default_tip }}\n      runner: ${{ needs.route",
+        "      default_tip: true\n      runner: ${{ needs.route",
+        "the lane attempt must pass head and default_tip through unchanged",
+    ),
     "continue-on-error": (
         ATTEMPT,
         "    timeout-minutes: 25\n",
@@ -333,14 +424,14 @@ MUTATIONS = {
     ),
     "tailnet join without a hosted-only guard": (
         ATTEMPT,
-        "      - name: Join the tailnet\n        if: ${{ runner.environment == 'github-hosted' }}\n",
-        "      - name: Join the tailnet\n",
+        "      - name: Join the tailnet\n        id: join\n        if: ${{ runner.environment == 'github-hosted' }}\n",
+        "      - name: Join the tailnet\n        id: join\n",
         "tailnet credentials may be used only by the tailscale action on a github-hosted runner",
     ),
     "tailnet join on self-hosted runners": (
         ATTEMPT,
-        "      - name: Join the tailnet\n        if: ${{ runner.environment == 'github-hosted' }}\n",
-        "      - name: Join the tailnet\n        if: ${{ runner.environment == 'self-hosted' }}\n",
+        "      - name: Join the tailnet\n        id: join\n        if: ${{ runner.environment == 'github-hosted' }}\n",
+        "      - name: Join the tailnet\n        id: join\n        if: ${{ runner.environment == 'self-hosted' }}\n",
         "tailnet credentials may be used only by the tailscale action on a github-hosted runner",
     ),
     "tailnet client id read by another step": (
@@ -447,7 +538,7 @@ MUTATIONS = {
     ),
     "the cache tripwire step removed": (
         ATTEMPT,
-        '      - name: Cache tripwire\n        env:\n          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}\n        run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"\n',
+        '      - name: Cache tripwire\n        env:\n          SIM_TAILNET_JOIN: ${{ steps.join.outcome }}\n          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}\n        run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"\n',
         "",
         "tripwire step must come before the Build step",
     ),
@@ -483,51 +574,69 @@ MUTATIONS = {
     ),
     "the attempt job always writing": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
         "    environment: sim-cache-write\n",
         "the attempt environment is 'sim-cache-write'",
     ),
     "the attempt job never writing": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
         "    environment: sim-cache-read\n",
         "wanted 'sim-cache-write'",
     ),
     "the attempt job without an environment": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
         "",
         "must choose its environment with an expression",
     ),
     "the attempt environment taken from the ref name so a tag named like the default branch writes": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
-        "    environment: ${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
+        "    environment: ${{ inputs.default_tip && github.ref_name == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n",
         "for ref refs/tags/main",
     ),
     "the attempt environment writing for any head": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
-        "head topic",
+        ENVIRONMENT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n",
+        "default_tip False",
     ),
     "the attempt environment writing with fail_test on": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
+        "    environment: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n",
         "fail_test True",
     ),
     "the attempt environment writing from a lab runner": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
+        "    environment: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n",
         "hosted False",
     ),
     "the attempt environment writing from a topic branch": (
         ATTEMPT,
-        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
-        "    environment: ${{ inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        ENVIRONMENT,
+        "    environment: ${{ inputs.default_tip && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n",
         "for ref refs/heads/topic",
+    ),
+    "the attempt environment comparing the head by name, where a tag MAIN matches main": (
+        ATTEMPT,
+        ENVIRONMENT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "must not compare inputs.head by name",
+    ),
+    "the attempt environment writing for a case variant of the default branch name": (
+        ATTEMPT,
+        ENVIRONMENT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "head MAIN, default_tip False, fail_test False, hosted True; wanted 'sim-cache-read'",
+    ),
+    "the attempt environment giving a lab runner the hosted reader environment": (
+        ATTEMPT,
+        ENVIRONMENT,
+        "    environment: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "wanted 'sim-cache-lab'",
     ),
     "a ref name read anywhere because a tag can carry the default branch name": (
         ATTEMPT,
@@ -720,9 +829,8 @@ def test_expression_evaluator_refuses_what_it_does_not_model(expression):
 
 
 SAVE_GUARD = (
-    "        if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
-    " && inputs.head == github.event.repository.default_branch && inputs.fail_test == false"
-    " && runner.environment == 'github-hosted' }}\n"
+    "        if: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+    " && inputs.fail_test == false && runner.environment == 'github-hosted' }}\n"
 )
 
 
@@ -733,7 +841,7 @@ def with_save_guard(copy, guard):
 def test_the_bare_form_of_the_save_guard_is_accepted_too(copy):
     with_save_guard(
         copy,
-        "github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch"
+        "inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
         " && inputs.fail_test == false && runner.environment == 'github-hosted'",
     )
     assert policy.violations(copy) == []
@@ -746,16 +854,18 @@ GATED = "must itself be gated on the default branch"
     "guard, message",
     [
         (None, GATED),
-        ("${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
-        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}", GATED),
-        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && runner.environment == 'github-hosted' }}", "must not run when fail_test is on"),
-        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'self-hosted' }}", GATED),
+        ("${{ github.ref_name == github.event.repository.default_branch && inputs.default_tip && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.default_tip && inputs.fail_test == false }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.default_tip && runner.environment == 'github-hosted' }}", "must not run when fail_test is on"),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.default_tip && inputs.fail_test == false && runner.environment == 'self-hosted' }}", GATED),
         ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
-        ("${{ inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
-        ("${{ github.ref != '' && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ inputs.default_tip && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ github.ref != '' && inputs.default_tip && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
         ("${{ always() }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", "must not compare inputs.head by name"),
         ("${{ github.event_name == 'workflow_dispatch' }}", GATED),
-        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == true && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.default_tip && inputs.fail_test == true && runner.environment == 'github-hosted' }}", GATED),
     ],
 )
 def test_a_cache_save_step_that_can_run_off_the_default_branch_or_with_fail_test_is_refused(copy, guard, message):
@@ -779,3 +889,12 @@ def test_a_cache_writer_key_passed_to_a_called_workflow_without_a_guard_is_refus
     assert old in text
     path.write_text(text.replace(old, old + "      write_key: ${{ secrets.SIM_CACHE_WRITE_KEY }}\n", 1), encoding="utf-8")
     assert any("SIM_CACHE_WRITE" in line for line in policy.violations(copy))
+
+
+def test_ci_shellchecks_the_hook_and_every_sim_gate_script():
+    jobs = policy.parse((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    runs = [str(step.get("run", "")).split() for step in jobs["workflow-lint"]["steps"]]
+    shellcheck = [words for words in runs if words[:1] == ["shellcheck"]]
+    assert len(shellcheck) == 1, runs
+    assert {".githooks/pre-push", "tools/sim_gate/*.sh"} <= set(shellcheck[0][1:])
+    assert {path.name for path in (WORKFLOWS.parents[1] / "tools" / "sim_gate").glob("*.sh")} >= {"cache_build.sh", "resolve_refs.sh"}
