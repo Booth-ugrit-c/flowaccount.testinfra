@@ -46,6 +46,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.head }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
@@ -142,7 +143,7 @@ jobs:
           set -u
           touch "$MARKERS/test-start"
           if [ "$KILL_RUNNER" = true ]; then
-              pkill -KILL -f 'Runner\.(Listener|Worker)' || true
+              sh "$GITHUB_WORKSPACE/tools/sim_gate/kill_own_runner.sh" || exit 1
               sleep 600
           fi
           python3 -c 'import json, sys; sys.stdout.buffer.write(("\n".join(json.load(open(sys.argv[1]))[sys.argv[2]]) + "\n").encode())' \

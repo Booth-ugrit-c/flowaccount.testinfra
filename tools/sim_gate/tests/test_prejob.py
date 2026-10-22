@@ -47,6 +47,9 @@ echo "$(cat "$T/parent") 1 $me dotnet"
 echo "$(cat "$T/victim") 1 $me dotnet"
 echo "$(cat "$T/other_comm") 1 $me sleep"
 echo "$(cat "$T/other_user") 1 $((me + 1)) dotnet"
+echo "900001 1 $me Runner.Listener"
+echo "900002 900001 $me Runner.Worker"
+echo "$(cat "$T/sibling") 900002 $me dotnet"
 """
 
 WRAPPER = """\
@@ -55,9 +58,10 @@ echo $$ > "$T/parent"
 sleep 120 & echo $! > "$T/victim"
 sleep 120 & echo $! > "$T/other_comm"
 sleep 120 & echo $! > "$T/other_user"
+sleep 120 & echo $! > "$T/sibling"
 bash -c 'echo $$ > "$T/self"; exec "$PREJOB_SHELL" "$SCRIPT"' > "$T/out" 2>&1
 echo $? > "$T/rc"
-for name in victim other_comm other_user; do
+for name in victim other_comm other_user sibling; do
     if kill -0 "$(cat "$T/$name")" 2>/dev/null; then echo alive > "$T/$name.state"; else echo dead > "$T/$name.state"; fi
     kill -KILL "$(cat "$T/$name")" 2>/dev/null
 done
@@ -125,6 +129,7 @@ class Lab:
             "victim": read("victim.state"),
             "other_comm": read("other_comm.state"),
             "other_user": read("other_user.state"),
+            "sibling": read("sibling.state"),
         }
 
     def docker_calls(self):
@@ -274,3 +279,9 @@ def test_survivor_report_names_pid_and_command_but_no_arguments(lab):
     result = lab.run()
     assert "dotnet" in result["out"]
     assert str(result["other_user"]) not in result["out"].replace("alive", "")
+
+
+def test_a_sibling_runners_live_job_process_is_not_a_survivor(lab):
+    result = lab.run()
+    assert result["victim"] == "dead"
+    assert result["sibling"] == "alive"

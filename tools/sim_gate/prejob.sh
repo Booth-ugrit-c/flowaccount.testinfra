@@ -69,7 +69,20 @@ survivors=$(printf '%s\n' "$table" | awk -v uid="$(id -u)" -v chain="$chain" -v 
         n = split(chain, c, " "); for (i = 1; i <= n; i++) skip[c[i]] = 1
         m = split(comms, w, " "); for (i = 1; i <= m; i++) want[w[i]] = 1
     }
-    $3 == uid && ($4 in want) && !($1 in skip) { print $1, $4 }')
+    { rows[++count] = $1; parent[$1] = $2; owner[$1] = $3; comm[$1] = $4 }
+    function under_a_worker(pid,    p) {
+        for (p = parent[pid]; p != "" && p != 0 && seen[p] != pid; p = parent[p]) {
+            seen[p] = pid
+            if (comm[p] == "Runner.Worker") return 1
+        }
+        return 0
+    }
+    END {
+        for (i = 1; i <= count; i++) {
+            pid = rows[i]
+            if (owner[pid] == uid && (comm[pid] in want) && !(pid in skip) && !under_a_worker(pid)) print pid, comm[pid]
+        }
+    }')
 if [ -n "$survivors" ]; then
     printf '%s\n' "$survivors" | while read -r pid comm; do
         echo "prejob: process from an earlier job: pid $pid ($comm), killed" >&2

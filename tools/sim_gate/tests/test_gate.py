@@ -131,6 +131,7 @@ def test_cli_usage_error_is_nonzero_and_never_green():
 
 TRIPWIRE = "red [infra: cache tripwire]"
 REASON = {"unit": "cache tripwire"}
+OTHER = {"unit": "other cause"}
 
 
 @pytest.mark.parametrize(
@@ -138,10 +139,14 @@ REASON = {"unit": "cache tripwire"}
     [
         ([("unit", "infra", "")], REASON, TRIPWIRE),
         ([("unit", "infra", "infra")], REASON, TRIPWIRE),
-        ([("unit", "infra", "pass")], REASON, PASS),
+        ([("unit", "infra", "pass")], REASON, TRIPWIRE),
+        ([("unit", "infra", "pass")], OTHER, PASS),
+        ([("unit", "infra", "infra")], OTHER, "red [infra: other cause]"),
+        ([("unit", "test", "")], OTHER, TEST),
         ([("unit", "test", "")], REASON, TEST),
-        ([("unit", "pass", "")], REASON, PASS),
+        ([("unit", "pass", "")], REASON, TRIPWIRE),
         ([("unit", "infra", "test")], REASON, TEST),
+        ([("unit", "infra", "")], REASON, TRIPWIRE),
         ([("unit", "infra", "infra"), ("integration", "test", "")], REASON, TEST),
         ([("unit", "infra", "infra"), ("integration", "infra", "infra")], REASON, TRIPWIRE),
         ([("unit", "infra", "infra")], {"unit": ""}, INFRA_TWICE),
@@ -180,3 +185,17 @@ def test_cli_renders_the_tripwire_in_stdout_exit_code_and_summary(tmp_path):
 def test_cli_ignores_an_empty_reason(tmp_path):
     out = run_cli(["--lane", "unit=infra,infra", "--reason", "unit="])
     assert out.stdout.strip() == f"gate: {INFRA_TWICE}"
+
+
+def test_a_tripped_attempt_whose_retry_passes_is_still_red_for_the_tripwire():
+    assert gate.overall([("unit", "infra", "pass")], REASON) == TRIPWIRE
+    assert gate.overall([("unit", "infra", "pass"), ("integration", "pass", "")], REASON) == TRIPWIRE
+
+
+def test_a_tripped_lane_is_not_hidden_by_a_passing_attempt():
+    assert gate.overall([("unit", "pass", "")], REASON) == TRIPWIRE
+
+
+def test_the_summary_row_of_a_tripped_lane_names_the_tripwire_even_when_the_retry_passed():
+    text = gate.summary([("unit", "infra", "pass")], TRIPWIRE, REASON)
+    assert "| unit | infra | pass | red [infra: cache tripwire] |" in text

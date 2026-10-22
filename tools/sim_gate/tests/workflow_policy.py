@@ -261,6 +261,87 @@ def minutes(docs, workflow, job):
     return int(docs[workflow]["jobs"][job]["timeout-minutes"])
 
 
+SECRET_REF = re.compile(r"""\bsecrets\s*[.\[]\s*['"]?([A-Za-z0-9_]+)""")
+READER_PREFIX = "SIM_CACHE_READ"
+
+
+def secret_allowed(name, path, secret, value):
+    key = str(path[-1])
+    exact = value.strip() == "${{ secrets." + secret + " }}" and key == secret
+    if secret == TOKEN_NAME:
+        return (
+            exact
+            and name == "sim-gate-lane.yml"
+            and path[:2] == ("jobs", "route")
+            and path[2] == "steps"
+            and path[4:5] == ("env",)
+        )
+    in_step_env = len(path) >= 5 and path[0] == "jobs" and path[2] == "steps" and path[4] == "env"
+    in_call_secrets = len(path) == 4 and path[0] == "jobs" and path[2] == "secrets"
+    if secret.startswith(READER_PREFIX):
+        return exact and (in_step_env or in_call_secrets)
+    if secret.startswith(WRITER_PREFIX):
+        return exact and in_step_env
+    return False
+
+
+def secret_violations(docs):
+    found = []
+    for name, doc in docs.items():
+        for path, value in walk(doc):
+            where = ".".join(map(str, path))
+            for match in SECRET_REF.finditer(str(value)):
+                if not secret_allowed(name, path, match.group(1), str(value)):
+                    found.append(f"{name}: secret {match.group(1)} is read at a place that is not allowed: {where}")
+            if "secrets" in path:
+                after = path[path.index("secrets") + 1 :]
+                if not after or not str(after[0]).startswith(READER_PREFIX):
+                    found.append(f"{name}: a secrets mapping may pass only {READER_PREFIX}* keys: {where}")
+    return found
+
+
+def hygiene_violations(docs):
+    steps = docs["sim-gate-attempt.yml"]["jobs"]["run"]["steps"]
+    hygiene = next((i for i, st in enumerate(steps) if st.get("name") == "Hygiene"), None)
+    if hygiene is None:
+        return ["the attempt run job has no Hygiene step"]
+    found = []
+    step = steps[hygiene]
+    if step.get("run", "").strip() != "sh tools/sim_gate/prejob.sh":
+        found.append("the Hygiene step must run sh tools/sim_gate/prejob.sh")
+    guard = condition(str(step["if"])) if "if" in step else "${{ true }}"
+    if not truthy(evaluate(guard, {"runner.environment": "self-hosted"})) or truthy(evaluate(guard, {"runner.environment": "github-hosted"})):
+        found.append("the Hygiene step must run on self-hosted runners only")
+    first_work = min(i for i, st in enumerate(steps) if st.get("name") in ("Set up .NET", "Health", "Services", "Affected", "Build", "Test"))
+    if hygiene > first_work:
+        found.append("the Hygiene step must come before the first dotnet or service step")
+    return found
+
+
+def lane_label_violations(docs):
+    jobs = docs["sim-gate.yml"]["jobs"]
+    labels = {lane: jobs[lane]["with"]["lab_label"] for lane in ("unit", "integration")}
+    found = []
+    if labels["unit"] == labels["integration"]:
+        found.append("the unit and integration lanes share one lab label expression")
+    for lane, label in labels.items():
+        if label != "${{ vars.SIM_LAB_LABEL_" + lane.upper() + " }}":
+            found.append(f"lane {lane} must use its own variable SIM_LAB_LABEL_{lane.upper()}, has {label}")
+    return found
+
+
+def checkout_violations(docs):
+    steps = docs["sim-gate-attempt.yml"]["jobs"]["run"]["steps"]
+    checkout = next(st for st in steps if st.get("name") == "Checkout")
+    affected = next(st for st in steps if st.get("name") == "Affected")
+    found = []
+    ref = checkout.get("with", {}).get("ref")
+    head = affected.get("env", {}).get("HEAD_REF")
+    if ref is None or ref != head or "--head \"$HEAD_REF\"" not in affected.get("run", ""):
+        found.append(f"the attempt checkout ref {ref!r} must equal the head given to affected {head!r}")
+    return found
+
+
 def violations(directory):
     docs = load(directory)
     found = []
@@ -304,6 +385,14 @@ def violations(directory):
         found.append(f"{TOKEN_NAME} is used outside a step env: {misplaced}")
     if len({p[:4] for n, p in refs}) != 1:
         found.append(f"{TOKEN_NAME} must appear in exactly one step")
+
+    found += lane_label_violations(docs)
+    found += checkout_violations(docs)
+    found += secret_violations(docs)
+    found += hygiene_violations(docs)
+    label_input = docs["sim-gate-lane.yml"]["on"]["workflow_call"]["inputs"]["lab_label"]
+    if "opaque" not in str(label_input.get("description", "")).lower():
+        found.append("lab_label input must say the label is public in logs and has to be opaque")
 
     default_branch = {"github.ref_name": "main", "github.event.repository.default_branch": "main"}
     other_branch = {"github.ref_name": "topic", "github.event.repository.default_branch": "main"}
@@ -351,10 +440,15 @@ def violations(directory):
     retry_if = lane_jobs["retry"]["if"]
     for verdict in ("pass", "test", "infra", "", "unknown"):
         for target in ("onprem", "cloud", ""):
-            context = {"needs.attempt.outputs.verdict": verdict, "needs.route.outputs.target": target}
-            runs = truthy(evaluate(condition(retry_if), context))
-            if runs != (verdict == "infra" and target == "onprem"):
-                found.append(f"retry runs={runs} for verdict {verdict!r} on target {target!r}")
+            for reason in ("", "cache tripwire", "other cause"):
+                context = {
+                    "needs.attempt.outputs.verdict": verdict,
+                    "needs.attempt.outputs.reason": reason,
+                    "needs.route.outputs.target": target,
+                }
+                runs = truthy(evaluate(condition(retry_if), context))
+                if runs != (verdict == "infra" and target == "onprem" and reason != "cache tripwire"):
+                    found.append(f"retry runs={runs} for verdict {verdict!r} on target {target!r} with reason {reason!r}")
 
     attempt = docs["sim-gate-attempt.yml"]["jobs"]
     total = (

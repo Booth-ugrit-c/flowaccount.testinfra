@@ -11,9 +11,9 @@ on:
         default: origin/main
         type: string
       head:
-        description: Head git ref for the affected selection
+        description: Branch, tag or full SHA that is both built and used for the affected selection
         required: false
-        default: HEAD
+        default: main
         type: string
       fail_test:
         description: Lab fault, add one failing test to the first test project of each lane
@@ -68,7 +68,7 @@ jobs:
       head: ${{ inputs.head }}
       fail_test: ${{ inputs.fail_test }}
       simulate_kill: ${{ inputs.simulate_kill }}
-      lab_label: ${{ vars.SIM_LAB_LABEL }}
+      lab_label: ${{ vars.SIM_LAB_LABEL_UNIT }}
 
   integration:
     name: integration
@@ -84,7 +84,7 @@ jobs:
       head: ${{ inputs.head }}
       fail_test: ${{ inputs.fail_test }}
       simulate_kill: ${{ inputs.simulate_kill }}
-      lab_label: ${{ vars.SIM_LAB_LABEL }}
+      lab_label: ${{ vars.SIM_LAB_LABEL_INTEGRATION }}
 
   gate:
     name: gate

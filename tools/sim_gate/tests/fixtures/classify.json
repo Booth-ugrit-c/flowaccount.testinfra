@@ -1,4 +1,73 @@
 {
+ "build_cut_by_timeout_without_annotations": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "cancelled",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "skipped",
+     "name": "Upload markers",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "health",
+   "services"
+  ]
+ },
  "build_failure": {
   "job": {
    "conclusion": "failure",
@@ -437,6 +506,58 @@
     }
    ]
   },
+  "log": "The operation was canceled.\n",
+  "markers": [
+   "build",
+   "health",
+   "services"
+  ]
+ },
+ "job_cancelled_before_test_without_annotations": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    }
+   ]
+  },
   "log": null,
   "markers": [
    "build",
@@ -502,6 +623,71 @@
    ]
   },
   "log": "The job running on runner x has exceeded the maximum execution time of 25 minutes.\nThe operation was canceled.\n",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "job_timeout_without_annotations": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Hygiene",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "cancelled",
+     "name": "Test",
+     "number": 8,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
   "markers": [
    "build",
    "health",
@@ -603,10 +789,21 @@
     }
    ]
   },
-  "log": null,
+  "log": "The operation was canceled.\n",
   "markers": null
  },
  "never_started_no_steps": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": []
+  },
+  "log": "The operation was canceled.\n",
+  "markers": null
+ },
+ "never_started_without_annotations": {
   "job": {
    "conclusion": "failure",
    "id": 1,
@@ -1079,6 +1276,136 @@
   ]
  },
  "test_step_cancelled": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "cancelled",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "The operation was canceled.\n",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "test_step_cancelled_with_empty_annotations": {
+  "job": {
+   "conclusion": "cancelled",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "cancelled",
+     "name": "Test",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "",
+  "markers": [
+   "build",
+   "health",
+   "services",
+   "test-start"
+  ]
+ },
+ "test_step_cancelled_without_annotations": {
   "job": {
    "conclusion": "cancelled",
    "id": 1,

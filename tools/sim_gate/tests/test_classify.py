@@ -44,6 +44,12 @@ EXPECTED = {
     "cache_tripwire_over_a_test_failure": "infra",
     "cache_tripwire_over_a_success": "infra",
     "cache_tripwire_alone": "infra",
+    "job_timeout_without_annotations": "test",
+    "build_cut_by_timeout_without_annotations": "test",
+    "test_step_cancelled_without_annotations": "test",
+    "test_step_cancelled_with_empty_annotations": "test",
+    "never_started_without_annotations": "test",
+    "job_cancelled_before_test_without_annotations": "test",
 }
 
 
@@ -61,6 +67,7 @@ def case_dir(root, name):
             (target / "markers" / marker).write_text("")
     if case["log"] is not None:
         (target / "log.txt").write_text(case["log"])
+        (target / "annotations.ok").write_text("")
     return target
 
 
@@ -312,3 +319,33 @@ def test_cli_writes_an_empty_reason_file_when_there_is_no_reason(tmp_path):
     out = run_cli(case_dir(tmp_path, "runner_lost_log"), args=["--reason-file", str(reason)])
     assert out.stdout == "infra" + chr(10)
     assert reason.read_text() == ""
+
+
+def test_a_failed_annotation_fetch_leaves_no_ok_marker_so_a_cancelled_test_step_is_test(api, tmp_path):
+    serve_attempt(api, [job_entry(7, TARGET_JOB)])
+    api.serve(ANNOTATIONS_PATH, b"{}", status=500)
+    fetch(api, tmp_path)
+    job_dir = tmp_path / "job"
+    assert (job_dir / "job.json").exists() and not (job_dir / "annotations.ok").exists()
+    assert classify.classify_dir(job_dir) == "test"
+
+
+def test_a_successful_annotation_fetch_with_a_cancel_signal_makes_a_cancelled_test_step_infra(api, tmp_path):
+    serve_attempt(api, [job_entry(7, TARGET_JOB)], annotations=[{"title": "", "message": "The operation was canceled."}])
+    fetch(api, tmp_path)
+    assert (tmp_path / "job" / "annotations.ok").exists()
+    assert classify.classify_dir(tmp_path / "job") == "infra"
+
+
+def test_a_successful_annotation_fetch_without_any_signal_leaves_a_cancelled_test_step_test(api, tmp_path):
+    serve_attempt(api, [job_entry(7, TARGET_JOB)], annotations=[])
+    fetch(api, tmp_path)
+    assert (tmp_path / "job" / "annotations.ok").exists()
+    assert classify.classify_dir(tmp_path / "job") == "test"
+
+
+def test_a_cancel_signal_in_a_log_without_the_ok_marker_is_not_trusted(tmp_path):
+    job = case_dir(tmp_path, "test_step_cancelled")
+    assert classify.classify_dir(job) == "infra"
+    (job / "annotations.ok").unlink()
+    assert classify.classify_dir(job) == "test"

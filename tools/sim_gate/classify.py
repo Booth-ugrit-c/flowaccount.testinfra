@@ -21,6 +21,8 @@ TRIPWIRE_REASON = "cache tripwire"
 STEP_TEST = "Test"
 INFRA_STEPS = ("Set up job", "Hygiene", "Set up .NET", "Health", "Services")
 TIMEOUT_TEXT = "exceeded the maximum execution time"
+CANCEL_TEXT = "the operation was canceled"
+ANNOTATIONS_OK = "annotations.ok"
 MAX_PAGES = 5
 
 
@@ -61,7 +63,7 @@ def step_conclusions(job):
     return {s["name"]: s.get("conclusion") for s in steps if isinstance(s, dict) and "name" in s}
 
 
-def classify(markers, job, log, fingerprints):
+def classify(markers, job, log, fingerprints, annotations_read=False):
     if TRIPWIRE_MARKER in markers:
         return "infra"
     if job is None:
@@ -74,15 +76,18 @@ def classify(markers, job, log, fingerprints):
         return "test"
     if TIMEOUT_TEXT in log:
         return "test"
-    if any(fingerprint in log for fingerprint in fingerprints):
+    cancelled_or_lost = annotations_read and (
+        CANCEL_TEXT in log or any(fingerprint in log for fingerprint in fingerprints)
+    )
+    if annotations_read and any(fingerprint in log for fingerprint in fingerprints):
         return "infra"
     if steps.get(STEP_TEST) == "cancelled":
-        return "infra"
+        return "infra" if cancelled_or_lost else "test"
     if any(steps.get(name) == "failure" for name in INFRA_STEPS):
         return "infra"
     never_started = steps.get(STEP_TEST) in (None, "skipped")
     nothing_failed = not any(c == "failure" for c in steps.values())
-    if never_started and nothing_failed and conclusion in ("cancelled", "failure"):
+    if never_started and nothing_failed and conclusion in ("cancelled", "failure") and cancelled_or_lost:
         return "infra"
     return "test"
 
@@ -94,6 +99,7 @@ def classify_dir(job_dir, fingerprints=None):
         read_job(job_dir / "job.json"),
         read_log(job_dir / "log.txt"),
         load_fingerprints() if fingerprints is None else fingerprints,
+        (job_dir / ANNOTATIONS_OK).is_file(),
     )
 
 
@@ -167,6 +173,11 @@ def fetch_markers(base, repository, token, run_id, artifact_name, markers_dir):
             (markers_dir / name).write_bytes(b"")
 
 
+def save_annotations(job_dir, text):
+    (job_dir / "log.txt").write_text(text, encoding="utf-8")
+    (job_dir / ANNOTATIONS_OK).write_text("", encoding="utf-8")
+
+
 def fetch_attempt(env, job_dir, job_suffix, artifact_name):
     token, repository, base = env.get("GITHUB_TOKEN", ""), env.get("GITHUB_REPOSITORY", ""), api_base(env)
     if not token or base is None or not REPOSITORY.match(repository):
@@ -182,7 +193,7 @@ def fetch_attempt(env, job_dir, job_suffix, artifact_name):
         return
     (job_dir / "job.json").write_text(json.dumps(slim(job)), encoding="utf-8")
     for label, step in (
-        ("annotations", lambda: (job_dir / "log.txt").write_text(fetch_annotations(base, repository, token, job["id"]), encoding="utf-8")),
+        ("annotations", lambda: save_annotations(job_dir, fetch_annotations(base, repository, token, job["id"]))),
         ("markers", lambda: fetch_markers(base, repository, token, env["GITHUB_RUN_ID"], artifact_name, job_dir / "markers")),
     ):
         try:

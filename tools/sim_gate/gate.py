@@ -5,6 +5,8 @@ import os
 import re
 import sys
 
+from tools.sim_gate.classify import TRIPWIRE_REASON
+
 PASS = "pass"
 RED_TEST = "red [test]"
 RED_INFRA_ONCE = "red [infra failed 1x]"
@@ -36,7 +38,7 @@ def parse_reason(raw):
 
 def lane_result(attempt, retry, reason=""):
     result = verdict_of(attempt, retry)
-    if reason and result in (RED_INFRA_ONCE, RED_INFRA_TWICE):
+    if reason == TRIPWIRE_REASON and result != RED_TEST or (reason and result in (RED_INFRA_ONCE, RED_INFRA_TWICE)):
         return REASON_LABEL.format(reason)
     return result
 

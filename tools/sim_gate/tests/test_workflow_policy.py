@@ -247,6 +247,90 @@ MUTATIONS = {
         "      retry_renamed:" + chr(10),
         "does not output retry_reason",
     ),
+    "a secret read in the Test step env": (
+        ATTEMPT,
+        "          KILL_RUNNER: ${{ inputs.kill_runner }}\n",
+        "          KILL_RUNNER: ${{ inputs.kill_runner }}\n          LEAK: ${{ secrets.OTHER_SECRET }}\n",
+        "secret OTHER_SECRET is read at a place that is not allowed",
+    ),
+    "the route token read in a second job": (
+        LANE,
+        "  attempt:\n    name: attempt\n",
+        "  attempt:\n    name: attempt\n    env:\n      T: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
+        "secret SIM_ROUTE_TOKEN is read at a place that is not allowed",
+    ),
+    "hygiene step deleted": (
+        ATTEMPT,
+        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh\n",
+        "",
+        "has no Hygiene step",
+    ),
+    "hygiene step only on hosted runners": (
+        ATTEMPT,
+        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh",
+        "        if: ${{ runner.environment == 'github-hosted' }}\n        run: sh tools/sim_gate/prejob.sh",
+        "self-hosted runners only",
+    ),
+    "hygiene step without a guard": (
+        ATTEMPT,
+        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh",
+        "        run: sh tools/sim_gate/prejob.sh",
+        "self-hosted runners only",
+    ),
+    "hygiene step running something else": (
+        ATTEMPT,
+        "        run: sh tools/sim_gate/prejob.sh",
+        "        run: echo skipped",
+        "must run sh tools/sim_gate/prejob.sh",
+    ),
+    "hygiene step after the first dotnet step": (
+        ATTEMPT,
+        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh\n      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n",
+        "      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh\n",
+        "must come before",
+    ),
+    "retry still runs after a cache tripwire": (
+        LANE,
+        " && needs.attempt.outputs.reason != 'cache tripwire'",
+        "",
+        "with reason 'cache tripwire'",
+    ),
+    "lab label input without the opaque warning": (
+        LANE,
+        "        description: Opaque runner label; it is printed unmasked in public logs, so never a host name\n",
+        "",
+        "must say the label is public in logs",
+    ),
+    "both lanes on one lab label": (
+        TOP,
+        "lab_label: ${{ vars.SIM_LAB_LABEL_INTEGRATION }}",
+        "lab_label: ${{ vars.SIM_LAB_LABEL_UNIT }}",
+        "share one lab label expression",
+    ),
+    "unit lane on a shared label variable": (
+        TOP,
+        "lab_label: ${{ vars.SIM_LAB_LABEL_UNIT }}",
+        "lab_label: ${{ vars.SIM_LAB_LABEL }}",
+        "lane unit must use its own variable SIM_LAB_LABEL_UNIT",
+    ),
+    "attempt checkout without a ref": (
+        ATTEMPT,
+        "          ref: ${{ inputs.head }}\n          fetch-depth: 0",
+        "          fetch-depth: 0",
+        "must equal the head given to affected",
+    ),
+    "attempt checkout of another commit than the selection head": (
+        ATTEMPT,
+        "          ref: ${{ inputs.head }}\n          fetch-depth: 0",
+        "          ref: ${{ github.sha }}\n          fetch-depth: 0",
+        "must equal the head given to affected",
+    ),
+    "affected selecting against another head than the checkout": (
+        ATTEMPT,
+        "          HEAD_REF: ${{ inputs.head }}",
+        "          HEAD_REF: ${{ inputs.base }}",
+        "must equal the head given to affected",
+    ),
     "environment on the attempt job": (
         ATTEMPT,
         "    runs-on: ${{ inputs.runner }}\n    timeout-minutes: 25",
@@ -274,6 +358,71 @@ def test_a_mutated_copy_is_refused(copy, name):
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     found = policy.violations(copy)
     assert any(expected in line for line in found), found
+
+
+def mutate(copy, filename, old, new):
+    path = copy / filename
+    text = path.read_text(encoding="utf-8")
+    assert old in text, "the mutation no longer matches the workflow"
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def test_a_non_reader_secret_passed_into_the_attempt_workflow_is_refused(copy):
+    mutate(
+        copy,
+        LANE,
+        "      tag: ${{ inputs.lane }}-attempt\n",
+        "      tag: ${{ inputs.lane }}-attempt\n",
+    )
+    path = copy / LANE
+    text = path.read_text(encoding="utf-8")
+    old = "    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-attempt"
+    assert old in text
+    path.write_text(
+        text.replace(old, old.replace("    with:", "    secrets:\n      OTHER_SECRET: ${{ secrets.OTHER_SECRET }}\n    with:"), 1),
+        encoding="utf-8",
+    )
+    found = policy.violations(copy)
+    assert any("a secrets mapping may pass only SIM_CACHE_READ" in line for line in found), found
+    assert any("secret OTHER_SECRET is read" in line for line in found), found
+
+
+READER_STEP_ENV = "          KILL_RUNNER: ${{ inputs.kill_runner }}\n"
+
+
+def test_the_reader_key_may_be_read_by_the_attempt_job_on_any_runner(copy):
+    mutate(copy, ATTEMPT, READER_STEP_ENV, READER_STEP_ENV + "          SIM_CACHE_READ_KEY: ${{ secrets.SIM_CACHE_READ_KEY }}\n")
+    assert policy.violations(copy) == []
+
+
+def test_the_reader_key_may_be_passed_to_the_attempt_workflow_through_secrets(copy):
+    path = copy / LANE
+    text = path.read_text(encoding="utf-8")
+    old = "    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-attempt"
+    assert old in text
+    new = old.replace("    with:", "    secrets:\n      SIM_CACHE_READ_KEY: ${{ secrets.SIM_CACHE_READ_KEY }}\n    with:")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    assert policy.violations(copy) == []
+
+
+def test_the_reader_key_under_a_different_name_or_expression_is_refused(copy):
+    mutate(copy, ATTEMPT, READER_STEP_ENV, READER_STEP_ENV + "          SIM_CACHE_READ_KEY: ${{ secrets.SIM_CACHE_WRITE_KEY }}\n")
+    assert any("not allowed" in line for line in policy.violations(copy))
+
+
+def test_the_writer_key_in_a_step_env_of_an_unguarded_attempt_job_is_refused(copy):
+    mutate(copy, ATTEMPT, READER_STEP_ENV, READER_STEP_ENV + "          SIM_CACHE_WRITE_KEY: ${{ secrets.SIM_CACHE_WRITE_KEY }}\n")
+    assert any("SIM_CACHE_WRITE" in line for line in policy.violations(copy))
+
+
+def test_a_workflow_call_secrets_declaration_for_a_non_reader_secret_is_refused(copy):
+    mutate(
+        copy,
+        ATTEMPT,
+        "on:\n  workflow_call:\n    inputs:",
+        "on:\n  workflow_call:\n    secrets:\n      OTHER_SECRET:\n        required: false\n    inputs:",
+    )
+    assert any("a secrets mapping may pass only" in line for line in policy.violations(copy))
 
 
 def test_a_missing_workflow_is_refused(copy):

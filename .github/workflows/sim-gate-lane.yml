@@ -21,6 +21,7 @@ on:
         default: none
         type: string
       lab_label:
+        description: Opaque runner label; it is printed unmasked in public logs, so never a host name
         required: false
         default: ""
         type: string
@@ -94,7 +95,7 @@ jobs:
     needs:
       - route
       - attempt
-    if: ${{ !cancelled() && needs.attempt.outputs.verdict == 'infra' && needs.route.outputs.target == 'onprem' }}
+    if: ${{ !cancelled() && needs.attempt.outputs.verdict == 'infra' && needs.attempt.outputs.reason != 'cache tripwire' && needs.route.outputs.target == 'onprem' }}
     permissions:
       contents: read
       actions: read
