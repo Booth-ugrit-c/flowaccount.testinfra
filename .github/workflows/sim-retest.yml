@@ -21,7 +21,21 @@ jobs:
   requeue:
     name: requeue
     runs-on: ubuntu-24.04
-    timeout-minutes: 1
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
     steps:
-      - name: Stand-in not wired
-        run: echo "the retest stand-in is not wired yet, nothing was dispatched"
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Retest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: python3 -m core.retest_sim run --run-id "$RUN_ID" --workflow sim-gate.yml
