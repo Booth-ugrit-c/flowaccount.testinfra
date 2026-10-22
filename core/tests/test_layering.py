@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CORE = ROOT / "core"
 FORBIDDEN_MODULES = ("adapters", "tools.sim_gate")
 FORBIDDEN_TEXT = re.compile(r"(?<![\w-])(adapters|tools[./]sim_gate)[./]")
-PRUNED = {"node_modules", "__pycache__"}
+PRUNED = {"node_modules", "__pycache__", "venv"}
 
 
 def forbidden(module):
