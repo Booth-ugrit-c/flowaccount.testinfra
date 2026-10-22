@@ -39,13 +39,14 @@ base=$(basename "$project" .csproj)
 row=$(grep "^$base " "$T/behaviour" | head -n 1 || true)
 pause=$(echo "$row" | awk '{ print $2 }')
 rc=$(echo "$row" | awk '{ print $3 }')
-total=$(echo "$row" | awk '{ print $4 }')
+executed=$(echo "$row" | awk '{ print $4 }')
+total=$(echo "$row" | awk '{ print $5 }')
 echo "start $base" >> "$T/events.log"
 [ -z "$pause" ] || [ "$pause" = 0 ] || sleep "$pause"
-case "$total" in
+case "$executed" in
     none | '') ;;
     malformed) printf '<TestRun' > "$dir/$name" ;;
-    *) printf '<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><ResultSummary><Counters total="%s" /></ResultSummary></TestRun>' "$total" > "$dir/$name" ;;
+    *) printf '<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><ResultSummary><Counters total="%s" executed="%s" notExecuted="0" /></ResultSummary></TestRun>' "${total:-$executed}" "$executed" > "$dir/$name" ;;
 esac
 echo "output of $base"
 echo "end $base" >> "$T/events.log"
@@ -260,6 +261,26 @@ def test_crlf_and_non_ascii_project_names_meet_the_zero_tests_guard(lab):
     )
     assert guard.returncode == 0, guard.stdout + guard.stderr
     assert f"total=4 {odd}" in guard.stdout
+
+
+def guard(listing, counts):
+    return subprocess.run(
+        [sys.executable, "-m", "core.zero_tests", "--list", listing, "--counts", str(counts)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_a_project_whose_tests_were_all_skipped_turns_the_guard_red(lab):
+    lab.behaviour("Core.Tests 0 0 0 3", "Utils.Tests 0 0 2 2")
+    listing = lab.listing(CORE, UTILS)
+    assert lab.run(listing).returncode == 0
+    result = guard(listing, lab.counts)
+    assert result.returncode == 1, result.stdout
+    assert f"{CORE} ran 0 tests" in result.stdout
+    assert f"total=2 {UTILS}" in result.stdout
 
 
 def test_a_zero_count_from_the_lane_turns_the_guard_red(lab):

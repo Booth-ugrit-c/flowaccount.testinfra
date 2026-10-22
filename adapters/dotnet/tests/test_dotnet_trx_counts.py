@@ -28,16 +28,22 @@ def run(tmp_path: Path, text: str):
     )
 
 
-def test_the_total_is_read_from_the_result_summary_counters(tmp_path):
-    result = run(tmp_path, trx('<Counters total="3" executed="3" passed="2" failed="1" />'))
+def test_the_executed_count_is_read_not_the_total(tmp_path):
+    result = run(tmp_path, trx('<Counters total="5" executed="3" passed="2" failed="1" notExecuted="0" />'))
     assert result.returncode == 0, result.stderr
     assert result.stdout == "3\n"
 
 
-def test_a_zero_total_is_a_count_not_a_failure(tmp_path):
-    result = run(tmp_path, trx('<Counters total="0" executed="0" />'))
-    assert result.returncode == 0
+def test_all_tests_skipped_is_an_executed_count_of_zero(tmp_path):
+    result = run(tmp_path, trx('<Counters total="3" executed="0" passed="0" failed="0" notExecuted="0" />'))
+    assert result.returncode == 0, result.stderr
     assert result.stdout == "0\n"
+
+
+def test_without_executed_the_count_is_total_minus_not_executed(tmp_path):
+    result = run(tmp_path, trx('<Counters total="5" notExecuted="2" />'))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "3\n"
 
 
 @pytest.mark.parametrize(
@@ -45,28 +51,36 @@ def test_a_zero_total_is_a_count_not_a_failure(tmp_path):
     [
         "",
         "not xml",
-        trx('<Counters total="3" />')[:-20],
-        trx('<Counters executed="3" />'),
-        trx('<Counters total="" />'),
-        trx('<Counters total="-1" />'),
-        trx('<Counters total="3.0" />'),
-        trx('<Counters total=" 3" />'),
-        trx('<Counters total="٣" />'),
-        trx('<Counters total="3" /><Counters total="4" />'),
+        trx('<Counters executed="3" />')[:-20],
+        trx('<Counters total="3" />'),
+        trx('<Counters notExecuted="0" />'),
+        trx('<Counters passed="3" />'),
+        trx('<Counters executed="" total="3" />'),
+        trx('<Counters executed="-1" />'),
+        trx('<Counters executed="3.0" />'),
+        trx('<Counters executed=" 3" />'),
+        trx('<Counters executed="٣" />'),
+        trx('<Counters total="3" notExecuted="x" />'),
+        trx('<Counters total="2" notExecuted="3" />'),
+        trx('<Counters executed="3" /><Counters executed="4" />'),
         trx(""),
-        trx('<Counters total="3" />', ns="urn:other"),
-        trx('<Counters total="3" />', root="Other"),
+        trx('<Counters executed="3" />', ns="urn:other"),
+        trx('<Counters executed="3" />', root="Other"),
     ],
     ids=[
         "empty",
         "not-xml",
         "truncated",
-        "no-total",
-        "blank-total",
+        "total-only",
+        "not-executed-only",
+        "no-counts",
+        "blank-executed",
         "negative",
         "decimal",
         "padded",
         "non-ascii-digit",
+        "bad-not-executed",
+        "not-executed-above-total",
         "two-counters",
         "no-counters",
         "wrong-namespace",
@@ -81,7 +95,7 @@ def test_a_malformed_file_gives_no_count(tmp_path, text):
 
 
 def test_counters_outside_the_result_summary_are_ignored(tmp_path):
-    text = trx('<Counters total="3" />').replace("<Results>", '<Results><Counters total="9" />')
+    text = trx('<Counters executed="3" />').replace("<Results>", '<Results><Counters executed="9" />')
     result = run(tmp_path, text)
     assert result.stdout == "3\n"
 
@@ -90,7 +104,7 @@ def test_an_external_entity_is_refused(tmp_path):
     secret = tmp_path / "secret.txt"
     secret.write_text("7")
     prolog = f'<!DOCTYPE TestRun [<!ENTITY leak SYSTEM "{secret.as_uri()}">]>'
-    text = trx('<Counters total="3" />', prolog=prolog).replace("<Results>", "<Results>&leak;")
+    text = trx('<Counters executed="3" />', prolog=prolog).replace("<Results>", "<Results>&leak;")
     result = run(tmp_path, text)
     assert result.returncode == 1
     assert result.stdout == ""
@@ -99,7 +113,7 @@ def test_an_external_entity_is_refused(tmp_path):
 
 def test_an_internal_entity_expansion_is_refused(tmp_path):
     prolog = '<!DOCTYPE TestRun [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>'
-    text = trx('<Counters total="3" />', prolog=prolog).replace("<Results>", "<Results>&b;")
+    text = trx('<Counters executed="3" />', prolog=prolog).replace("<Results>", "<Results>&b;")
     result = run(tmp_path, text)
     assert result.returncode == 1
     assert result.stdout == ""
