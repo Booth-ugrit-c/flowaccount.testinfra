@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.sim_gate import plan
+from adapters.dotnet import plan
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC = "sim/dotnet/src/"
@@ -29,7 +29,7 @@ def run(tmp_path, affected, lane, emit):
     path = tmp_path / "affected.json"
     path.write_text(json.dumps(affected), encoding="utf-8")
     return subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.plan", "--affected", str(path), "--lane", lane, "--emit", emit],
+        [sys.executable, "-m", "adapters.dotnet.plan", "--affected", str(path), "--lane", lane, "--emit", emit],
         capture_output=True,
         cwd=REPO_ROOT,
         timeout=60,
@@ -101,14 +101,14 @@ def test_an_unknown_lane_is_refused(tmp_path, lane):
 
 def test_a_missing_or_malformed_affected_file_is_refused(tmp_path):
     missing = subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.plan", "--affected", str(tmp_path / "none.json"), "--lane", "unit", "--emit", "build"],
+        [sys.executable, "-m", "adapters.dotnet.plan", "--affected", str(tmp_path / "none.json"), "--lane", "unit", "--emit", "build"],
         capture_output=True, cwd=REPO_ROOT, timeout=60,
     )
     assert missing.returncode == 2
     bad = tmp_path / "bad.json"
     bad.write_text("[1, 2]", encoding="utf-8")
     broken = subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.plan", "--affected", str(bad), "--lane", "unit", "--emit", "build"],
+        [sys.executable, "-m", "adapters.dotnet.plan", "--affected", str(bad), "--lane", "unit", "--emit", "build"],
         capture_output=True, cwd=REPO_ROOT, timeout=60,
     )
     assert broken.returncode == 2
@@ -149,7 +149,7 @@ def test_an_unknown_project_in_the_build_list_is_refused(tmp_path):
 
 def run_all(lane, emit, *extra):
     return subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.plan", "--all", "--lane", lane, "--emit", emit, *extra],
+        [sys.executable, "-m", "adapters.dotnet.plan", "--all", "--lane", lane, "--emit", emit, *extra],
         capture_output=True,
         cwd=REPO_ROOT,
         timeout=60,

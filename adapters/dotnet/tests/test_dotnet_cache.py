@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.sim_gate import cache
+from adapters.dotnet import cache
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "cache" / "tree.json").read_text(encoding="utf-8"))
@@ -238,23 +238,6 @@ def closed_endpoint():
         return f"http://127.0.0.1:{probe.getsockname()[1]}"
 
 
-def test_signature_matches_the_published_aws_example():
-    access = "AKIA" + "IOSFODNN7EXAMPLE"
-    secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-    headers = {
-        "host": "examplebucket.s3.amazonaws.com",
-        "range": "bytes=0-9",
-        "x-amz-content-sha256": hashlib.sha256(b"").hexdigest(),
-        "x-amz-date": "20130524T000000Z",
-    }
-    header = cache.sign("GET", "/test.txt", headers, hashlib.sha256(b"").hexdigest(), access, secret, "us-east-1")
-    assert header == (
-        f"AWS4-HMAC-SHA256 Credential={access}/20130524/us-east-1/s3/aws4_request, "
-        "SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, "
-        "Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
-    )
-
-
 def test_stale_entry_under_the_name_or_an_old_key_is_not_restored(monkeypatch, capsys, repo, store, tmp_path):
     configure(monkeypatch, store.endpoint)
     old_key = keys_of(repo)[CORE]
@@ -358,7 +341,7 @@ def test_key_command_prints_the_computed_key(monkeypatch, capsys, repo):
 
 def test_key_command_refuses_a_project_outside_the_root(monkeypatch, capsys, repo):
     code, out, err = run(monkeypatch, capsys, repo, "key", "--project", "nowhere/X.csproj", "--root", ROOT, "--sdk", SDK)
-    assert code == 2 and out == "" and err.startswith("sim_gate.cache:")
+    assert code == 2 and out == "" and err.startswith("dotnet.cache:")
 
 
 def test_unreachable_endpoint_is_a_miss_not_a_failure(monkeypatch, capsys, repo):
@@ -484,7 +467,7 @@ def test_archive_that_escapes_the_project_directory_is_refused(monkeypatch, caps
 def test_archive_larger_than_the_limit_is_a_miss(monkeypatch, capsys, repo, store):
     configure(monkeypatch, store.endpoint)
     store.objects[cache_path(keys_of(repo)[CORE])] = tar_gz({"bin/a.dll": os.urandom(5000)})
-    monkeypatch.setattr(cache, "MAX_ARCHIVE_BYTES", 1000)
+    monkeypatch.setattr(cache.client, "MAX_ARCHIVE_BYTES", 1000)
     code, out, err = restore(monkeypatch, capsys, repo)
     assert (code, out.strip()) == (0, "miss") and "too large" in err
     assert snapshot(project_dir(repo)) == ["Core.csproj", "Stamp.cs"]
@@ -574,41 +557,6 @@ def test_save_refuses_a_symlink_in_the_output(monkeypatch, capsys, repo, store):
     assert store.requests == []
 
 
-def test_tripwire_present_writes_the_marker(monkeypatch, capsys, store, tmp_path):
-    configure(monkeypatch, store.endpoint)
-    store.objects["/sim-control/tripwire"] = b"tripped"
-    markers = tmp_path / "work" / "markers"
-    monkeypatch.chdir(tmp_path)
-    code = cache.main(["tripwire", "--markers", str(markers)])
-    assert code == 0
-    assert (markers / "cache-tripwire").is_file()
-    assert [(r["method"], r["path"], r["key_id"], r["verified"]) for r in store.requests] == [
-        ("GET", "/sim-control/tripwire", READ_ID, True)
-    ]
-
-
-def test_tripwire_absent_writes_nothing(monkeypatch, store, tmp_path):
-    configure(monkeypatch, store.endpoint)
-    markers = tmp_path / "markers"
-    markers.mkdir()
-    assert cache.main(["tripwire", "--markers", str(markers)]) == 0
-    assert list(markers.iterdir()) == []
-    assert store.paths() == ["/sim-control/tripwire"]
-
-
-@pytest.mark.parametrize("mode", ["down", 403, 500, "slow", "no-key"])
-def test_tripwire_store_down_or_erroring_is_not_a_trip(monkeypatch, store, tmp_path, mode):
-    markers = tmp_path / "markers"
-    markers.mkdir()
-    configure(monkeypatch, closed_endpoint() if mode == "down" else store.endpoint, reader=mode != "no-key")
-    store.objects["/sim-control/tripwire"] = b"tripped"
-    store.mode = mode if mode in (403, 500, "slow") else None
-    assert cache.main(["tripwire", "--markers", str(markers), "--timeout", "0.3"]) == 0
-    assert list(markers.iterdir()) == []
-    if mode == "no-key":
-        assert store.requests == []
-
-
 def test_region_can_be_overridden(monkeypatch, capsys, repo):
     other = FakeS3(region="eu-west-1")
     try:
@@ -657,7 +605,7 @@ def test_secrets_never_reach_a_real_process_and_are_not_accepted_on_argv(tmp_pat
         "SIM_CACHE_READ_KEY_ID": READ_ID,
         "SIM_CACHE_READ_SECRET": READ_SECRET,
     }
-    command = [sys.executable, "-m", "tools.sim_gate.cache", "restore", "--project", CORE, "--root", ROOT, "--sdk", SDK]
+    command = [sys.executable, "-m", "adapters.dotnet.cache", "restore", "--project", CORE, "--root", ROOT, "--sdk", SDK]
     proc = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True)
     assert proc.returncode == 0 and proc.stdout.strip() == "miss"
     assert READ_ID not in proc.stdout + proc.stderr and READ_SECRET not in proc.stdout + proc.stderr
@@ -670,7 +618,7 @@ def test_secrets_never_reach_a_real_process_and_are_not_accepted_on_argv(tmp_pat
 
 def test_help_documents_the_save_precondition():
     proc = subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.cache", "save", "--help"],
+        [sys.executable, "-m", "adapters.dotnet.cache", "save", "--help"],
         cwd=REPO_ROOT, env={**os.environ, "PYTHONPATH": str(REPO_ROOT)}, capture_output=True, text=True,
     )
     flat = " ".join(proc.stdout.split())
@@ -725,19 +673,11 @@ def test_restore_removes_stale_staging_directories(monkeypatch, capsys, repo, st
     assert snapshot(project_dir(repo)) == ["Core.csproj", "Stamp.cs"]
 
 
-@pytest.mark.parametrize("command", ["restore", "tripwire"])
-def test_key_id_with_a_newline_is_no_credential_and_never_a_traceback(monkeypatch, capsys, repo, store, tmp_path, command):
+def test_key_id_with_a_newline_is_no_credential_and_never_a_traceback(monkeypatch, capsys, repo, store):
     configure(monkeypatch, store.endpoint)
     monkeypatch.setenv("SIM_CACHE_READ_KEY_ID", "KEYID\n")
-    if command == "restore":
-        code, out, err = restore(monkeypatch, capsys, repo)
-        assert (code, out.strip()) == (0, "miss")
-    else:
-        monkeypatch.chdir(tmp_path)
-        assert cache.main(["tripwire", "--markers", str(tmp_path / "m")]) == 0
-        captured = capsys.readouterr()
-        err = captured.err
-        assert not (tmp_path / "m" / "cache-tripwire").exists()
+    code, out, err = restore(monkeypatch, capsys, repo)
+    assert (code, out.strip()) == (0, "miss")
     assert "no reader key" in err
     assert "KEYID" not in err and "Signature=" not in err and "Traceback" not in err
     assert store.requests == []
@@ -772,13 +712,3 @@ def test_tracked_file_inside_a_bin_or_obj_directory_is_refused(monkeypatch, caps
     for command in ("key", "restore"):
         code, out, err = run(monkeypatch, capsys, repo, command, "--project", CORE, "--root", ROOT, "--sdk", SDK)
         assert code == 2 and out == "" and "bin or obj" in err
-
-
-@pytest.mark.parametrize("field", ["region", "secret"])
-def test_a_surrogate_in_a_signed_value_is_a_store_error_not_a_crash(store, field):
-    values = {"region": "us-east-1", "secret": READ_SECRET}
-    values[field] += chr(0xDCFF)
-    client = cache.Store(store.endpoint, READ_ID, values["secret"], values["region"], 2.0)
-    with pytest.raises(cache.StoreError):
-        client.get("sim-cache", "x.tar.gz")
-    assert store.requests == []

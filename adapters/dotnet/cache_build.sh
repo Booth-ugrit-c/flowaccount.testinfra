@@ -8,7 +8,7 @@ cache() {
     if [ -n "${SIM_CACHE_CMD:-}" ]; then
         "$SIM_CACHE_CMD" "$@"
     else
-        python3 -m tools.sim_gate.cache "$@"
+        python3 -m adapters.dotnet.cache "$@"
     fi
 }
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from adapters.workspace import affected
-from tools.sim_gate import cache as client
+from core import store as client
 
 KEY_FORMAT = 1
 CACHE_DIR = "_cacache"
@@ -178,7 +178,7 @@ def command_restore(args) -> int:
         staged = work / "staged"
         staged.mkdir()
         try:
-            status = client._open_store("READ", args.timeout).get(client.CACHE_BUCKET, _object(key), archive)
+            status = client.open_store("READ", args.timeout).get(client.CACHE_BUCKET, _object(key), archive)
             if status != 200:
                 print("miss")
                 if status != 404:
@@ -245,7 +245,7 @@ def command_save(args) -> int:
     try:
         archive = work / "archive.tar.gz"
         try:
-            store = client._open_store("WRITE", args.timeout)
+            store = client.open_store("WRITE", args.timeout)
             build_archive(Path(args.dir), archive)
             if archive.stat().st_size > client.MAX_ARCHIVE_BYTES:
                 raise ArchiveError("archive too large")
@@ -271,7 +271,7 @@ def _parser() -> argparse.ArgumentParser:
             "npm download cache (the _cacache directory of `npm ci --cache DIR`). The key is a sha256 over "
             "package-lock.json, the node and npm major versions and the platform. Every registry entry in the "
             "lockfile must carry a sha512 integrity, so npm verifies each restored tarball. Store settings come "
-            "from the environment as for the dotnet cache client."
+            "from the environment as for python -m core.store."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

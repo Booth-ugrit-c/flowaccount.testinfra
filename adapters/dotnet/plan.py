@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from tools.sim_gate import affected
+from adapters.dotnet import affected
 
 LANES = ("unit", "integration")
 INTEGRATION_MARKER = "IntegrationTests"
@@ -47,7 +47,7 @@ def build_plan(graph: dict, tests: Sequence[str]) -> list:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m tools.sim_gate.plan")
+    parser = argparse.ArgumentParser(prog="python -m adapters.dotnet.plan")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--affected")
     source.add_argument("--all", action="store_true")
@@ -73,7 +73,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             result = tests
     except (OSError, ValueError, KeyError, TypeError, affected.GraphError) as exc:
-        print(f"sim_gate.plan: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"dotnet.plan: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     sys.stdout.buffer.write(("\n".join(result) + "\n" if result else "").encode("utf-8"))
     return 0
