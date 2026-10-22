@@ -9,7 +9,7 @@ import urllib.error
 from urllib.parse import quote
 
 from core.classify import TRIPWIRE_REASON
-from core.comment import BRANCH, RUN_ID, SHA, Refused, call, call_json, fetch_state, text
+from core.comment import BRANCH, GATE_RUNNING, RUN_ID, SHA, Refused, call, call_json, fetch_state, gate_agrees, gate_conclusion, text
 from core.gate import BUILD
 from core.route import REPOSITORY, api_base
 
@@ -33,6 +33,19 @@ def wait_for_run(base, repository, token, run_id, wait, poll, sleep, clock):
             return run
         if clock() >= deadline:
             raise NoDispatch(f"run {run_id} not completed within {wait:g}s")
+        sleep(poll)
+
+
+def wait_for_gate(base, repository, token, run_id, wait, poll, sleep, clock):
+    deadline = clock() + wait
+    while True:
+        try:
+            return gate_conclusion(base, repository, token, run_id)
+        except Refused as exc:
+            if str(exc) != GATE_RUNNING:
+                raise
+        if clock() >= deadline:
+            raise NoDispatch(f"gate job of run {run_id} not completed within {wait:g}s")
         sleep(poll)
 
 
@@ -95,6 +108,7 @@ def run(env, run_id, workflow, wait, poll, sleep=time.sleep, clock=time.monotoni
     state = fetch_state(base, repository, token, run_id)
     if state["run_id"] != run_id:
         raise Refused("verdict run id")
+    gate_agrees(state, wait_for_gate(base, repository, token, run_id, wait, poll, sleep, clock))
     lanes = [lane for lane in retest_lanes(state) if lane != BUILD]
     if not lanes:
         raise NoDispatch("no test lane to retest")

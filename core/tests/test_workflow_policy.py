@@ -982,6 +982,12 @@ MUTATIONS = {
         '          name: sim-gate-verdict\n          path: ${{ runner.temp }}/verdict\n          run-id: "1"\n',
         "the comment job must be exactly the pinned job",
     ),
+    "the comment job told the gate passed": (
+        TOP,
+        "          GATE_RESULT: ${{ needs.gate.result }}\n",
+        "          GATE_RESULT: success\n",
+        "the comment job must be exactly the pinned job",
+    ),
     "the requeue job on a retest run": (
         TOP,
         "needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && ",

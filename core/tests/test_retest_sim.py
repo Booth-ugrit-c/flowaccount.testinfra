@@ -40,6 +40,8 @@ class FakeGitHub:
         self.workflow_runs = []
         self.workflow_total = None
         self.tips = {}
+        self.jobs = {}
+        self.jobs_total = None
         self.fail = {}
         self.requests = []
         parent = self
@@ -99,6 +101,13 @@ class FakeGitHub:
                 return 404, b"{}", {}
             current = sequence.pop(0) if len(sequence) > 1 else sequence[0]
             return 200, json.dumps(current).encode(), {}
+        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/jobs", path):
+            sequence = self.jobs.get(match.group(1))
+            if not sequence:
+                return 404, b"{}", {}
+            current = sequence.pop(0) if len(sequence) > 1 else sequence[0]
+            total = len(current) if self.jobs_total is None else self.jobs_total
+            return 200, json.dumps({"total_count": total, "jobs": current}).encode(), {}
         if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/artifacts", path):
             run_id = match.group(1)
             listed = []
@@ -150,6 +159,10 @@ def make_state(**changes):
     return state
 
 
+def gate_jobs(conclusion="failure", status="completed"):
+    return [{"name": "validate", "status": "completed", "conclusion": "success"}, {"name": "gate", "status": status, "conclusion": conclusion}]
+
+
 def make_run(**changes):
     run = {
         "id": 100,
@@ -174,6 +187,7 @@ def github(monkeypatch):
         fake.runs["100"] = [make_run()]
         fake.artifacts["100"] = zipped(make_state())
         fake.tips["feature-a"] = SHA_A
+        fake.jobs["100"] = [gate_jobs()]
         yield fake
 
 
@@ -241,6 +255,45 @@ def no_dispatch(github, capsys, reason):
     assert reason in out
 
 
+def test_never_dispatches_when_the_gate_job_passed_but_the_verdict_says_infra(github, capsys):
+    github.jobs["100"] = [gate_jobs("success")]
+    no_dispatch(github, capsys, "gate result")
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", None])
+def test_never_dispatches_when_the_gate_job_did_not_fail(github, capsys, conclusion):
+    github.jobs["100"] = [gate_jobs(conclusion)]
+    no_dispatch(github, capsys, "gate result")
+
+
+def test_never_dispatches_when_the_gate_job_is_missing(github, capsys):
+    github.jobs["100"] = [gate_jobs()[:1]]
+    no_dispatch(github, capsys, "gate job missing")
+
+
+def test_never_dispatches_when_the_jobs_cannot_be_read(github, capsys):
+    github.jobs.pop("100")
+    no_dispatch(github, capsys, "HTTPError 404")
+
+
+def test_never_dispatches_when_the_jobs_listing_is_incomplete(github, capsys):
+    github.jobs_total = 3
+    no_dispatch(github, capsys, "jobs listing")
+
+
+def test_waits_for_the_gate_job_to_complete_then_dispatches(github, capsys):
+    github.jobs["100"] = [gate_jobs(None, "in_progress"), gate_jobs()]
+    run_tool(capsys)
+    assert len(github.dispatches()) == 1
+
+
+def test_never_dispatches_when_the_gate_job_never_completes(github, capsys):
+    github.jobs["100"] = [gate_jobs(None, "in_progress")]
+    out = run_tool(capsys, wait="0.05")
+    assert github.dispatches() == []
+    assert "gate job of run 100 not completed" in out
+
+
 def test_never_dispatches_when_any_lane_is_test(github, capsys):
     github.artifacts["100"] = zipped(make_state(result="red [test]", lanes=[lane("build", "pass"), lane("unit", "infra"), lane("integration", "test", executed=4)]))
     no_dispatch(github, capsys, "a lane failed with test")
@@ -263,7 +316,8 @@ def test_never_dispatches_for_an_in_place_rerun(github, capsys):
 
 def test_never_dispatches_without_an_infra_lane(github, capsys):
     github.runs["100"] = [make_run(conclusion="failure")]
-    github.artifacts["100"] = zipped(make_state(result="pass", retest_lanes=[], lanes=[lane("build", "pass"), lane("unit", "pass", executed=3)]))
+    github.jobs["100"] = [gate_jobs("success")]
+    github.artifacts["100"] = zipped(make_state(result="pass", retest_lanes=[],lanes=[lane("build", "pass"), lane("unit", "pass", executed=3)]))
     no_dispatch(github, capsys, "no infra lane")
 
 

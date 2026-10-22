@@ -1191,9 +1191,10 @@ COMMENT_JOB = {
                 "GITHUB_TOKEN": "${{ github.token }}",
                 "PR_NUMBER": "${{ needs.validate.outputs.pr_number }}",
                 "STACK": "${{ inputs.stack }}",
+                "GATE_RESULT": "${{ needs.gate.result }}",
                 "RUN_URL": "${{ format('{0}/{1}/actions/runs/{2}/attempts/{3}', github.server_url, github.repository, github.run_id, github.run_attempt) }}",
             },
-            "run": 'python3 -m core.comment upsert --pr "$PR_NUMBER" --marker "sim-gate:${STACK}" --state "$RUNNER_TEMP/verdict/verdict.json" --run-url "$RUN_URL"',
+            "run": 'python3 -m core.comment upsert --pr "$PR_NUMBER" --marker "sim-gate:${STACK}" --state "$RUNNER_TEMP/verdict/verdict.json" --run-url "$RUN_URL" --gate-result "$GATE_RESULT"',
         },
     ],
 }

@@ -23,6 +23,9 @@ MAX_LANES = 16
 MAX_PAGES = 10
 PER_PAGE = 100
 TRUNCATED = "\n\n_Truncated: the comment reached the size limit._"
+GATE_JOB = "gate"
+GATE_RESULTS = ("success", "failure")
+GATE_RUNNING = "gate job running"
 
 MARKER = r"sim-gate:[a-z0-9-]{1,32}"
 PR_NUMBER = r"[1-9][0-9]{0,9}"
@@ -171,6 +174,25 @@ def fetch_state(base, repository, token, run_id):
         return parse_state(member.read(MAX_STATE_BYTES + 1))
 
 
+def gate_conclusion(base, repository, token, run_id):
+    text(run_id, RUN_ID, "run id")
+    listing = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100", token)
+    jobs = listing.get("jobs") if isinstance(listing, dict) else None
+    if not isinstance(jobs, list) or listing.get("total_count") != len(jobs):
+        raise Refused("jobs listing")
+    gates = [job for job in jobs if isinstance(job, dict) and job.get("name") == GATE_JOB]
+    if len(gates) != 1:
+        raise Refused("gate job missing")
+    if gates[0].get("status") != "completed":
+        raise Refused(GATE_RUNNING)
+    return gates[0].get("conclusion")
+
+
+def gate_agrees(state, conclusion):
+    if conclusion not in GATE_RESULTS or (state["result"] == "pass") != (conclusion == "success"):
+        raise Refused("gate result")
+
+
 def cell(value):
     return re.sub(r"\r\n|\r|\n", " ", str(value).replace("|", "\\|"))
 
@@ -232,16 +254,21 @@ def own_comment_id(base, repository, token, pr, header):
 def prior_state(base, repository, token, state):
     try:
         prior = fetch_state(base, repository, token, state["retest_of"])
+        conclusion = gate_conclusion(base, repository, token, state["retest_of"])
     except Exception as exc:
         print(f"comment: previous run unreadable: {type(exc).__name__}", file=sys.stderr)
         return None, "Rows of the previous run could not be read."
     same = prior["run_id"] == state["retest_of"] and prior["stack"] == state["stack"]
     if not same or prior["inputs"]["pr_sha"] != state["inputs"]["pr_sha"]:
         return None, "Rows of the previous run are not shown: it tested a different commit or stack."
+    try:
+        gate_agrees(prior, conclusion)
+    except Refused:
+        return None, "Rows of the previous run are not shown: its verdict disagrees with its gate job."
     return prior, ""
 
 
-def upsert(env, pr, marker, state_path, run_url):
+def upsert(env, pr, marker, state_path, run_url, gate_result):
     token, repository, base = env.get("GITHUB_TOKEN", ""), env.get("GITHUB_REPOSITORY", ""), api_base(env)
     if not token or base is None or not REPOSITORY.match(repository):
         raise Refused("environment")
@@ -257,6 +284,7 @@ def upsert(env, pr, marker, state_path, run_url):
         raise Refused("marker")
     if pr != state["inputs"]["pr_number"]:
         raise Refused("pr")
+    gate_agrees(state, gate_result)
     prior, note = (None, "")
     if state["retest_of"]:
         prior, note = prior_state(base, repository, token, state)
@@ -278,9 +306,10 @@ def main(argv):
     command.add_argument("--marker", required=True)
     command.add_argument("--state", required=True)
     command.add_argument("--run-url", required=True)
+    command.add_argument("--gate-result", required=True)
     args = parser.parse_args(argv)
     try:
-        print(f"comment: {upsert(os.environ, args.pr, args.marker, args.state, args.run_url)}")
+        print(f"comment: {upsert(os.environ, args.pr, args.marker, args.state, args.run_url, args.gate_result)}")
     except Refused as exc:
         print(f"comment: refused: {exc}", file=sys.stderr)
         return 1

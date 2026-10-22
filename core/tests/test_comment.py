@@ -40,6 +40,7 @@ class FakeGitHub:
     def __init__(self):
         self.comments = []
         self.artifacts = {}
+        self.jobs = {}
         self.fail = {}
         self.requests = []
         self.next_id = 1000
@@ -103,6 +104,11 @@ class FakeGitHub:
                     item["body"] = payload["body"]
                     return 200, json.dumps(item).encode(), {}
             return 404, b"{}", {}
+        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/jobs", path):
+            if match.group(1) not in self.jobs:
+                return 404, b"{}", {}
+            jobs = self.jobs[match.group(1)]
+            return 200, json.dumps({"total_count": len(jobs), "jobs": jobs}).encode(), {}
         if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/artifacts", path):
             run_id = match.group(1)
             listed = []
@@ -159,10 +165,19 @@ def github(monkeypatch):
         yield fake
 
 
-def upsert(tmp_path, state, marker=MARKER, run_url=RUN_URL, pr="7"):
+def gate_result(state):
+    return "success" if state["result"] == "pass" else "failure"
+
+
+def gate_jobs(conclusion):
+    return [{"name": "validate", "status": "completed", "conclusion": "success"}, {"name": "gate", "status": "completed", "conclusion": conclusion}]
+
+
+def upsert(tmp_path, state, marker=MARKER, run_url=RUN_URL, pr="7", gate=None):
     path = tmp_path / "verdict.json"
     path.write_text(json.dumps(state), encoding="utf-8")
-    return comment.main(["upsert", "--pr", pr, "--marker", marker, "--state", str(path), "--run-url", run_url])
+    gate = gate_result(state) if gate is None else gate
+    return comment.main(["upsert", "--pr", pr, "--marker", marker, "--state", str(path), "--run-url", run_url, "--gate-result", gate])
 
 
 def table_rows(body):
@@ -244,6 +259,7 @@ def test_a_retest_keeps_rows_of_lanes_it_did_not_rerun(github, tmp_path):
         lanes=[lane("build", "pass"), lane("unit", "infra"), lane("integration", "pass", executed=4)],
     )
     github.artifacts["100"] = zipped(prior)
+    github.jobs["100"] = gate_jobs("failure")
     retest = make_state(retest=True, retest_of="100", lanes=[lane("build", "pass"), lane("unit", "pass", executed=12)])
     assert upsert(tmp_path, retest) == 0
     body = github.comments[0]["body"]
@@ -258,10 +274,62 @@ def test_a_retest_drops_prior_rows_from_another_commit(github, tmp_path):
     prior = make_state(run_id="100", lanes=[lane("build", "pass"), lane("integration", "pass", executed=4)])
     prior["inputs"]["pr_sha"] = SHA_B
     github.artifacts["100"] = zipped(prior)
+    github.jobs["100"] = gate_jobs("success")
     assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
     body = github.comments[0]["body"]
     assert "integration" not in body
     assert "different commit" in body
+
+
+def prior_infra_run(github, conclusion):
+    prior = make_state(
+        run_id="100",
+        result="red [infra failed 1x]",
+        retest_lanes=["unit"],
+        lanes=[lane("build", "pass"), lane("unit", "infra"), lane("integration", "pass", executed=4)],
+    )
+    github.artifacts["100"] = zipped(prior)
+    if conclusion is not None:
+        github.jobs["100"] = gate_jobs(conclusion)
+
+
+@pytest.mark.parametrize("conclusion", ["success", "cancelled", "skipped"])
+def test_a_retest_drops_prior_rows_whose_verdict_disagrees_with_the_gate_job(github, tmp_path, conclusion):
+    prior_infra_run(github, conclusion)
+    assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
+    body = github.comments[0]["body"]
+    assert "integration" not in body and "previous run](" not in body
+    assert "disagrees with its gate job" in body
+
+
+def test_a_retest_drops_prior_rows_when_the_gate_job_cannot_be_read(github, tmp_path):
+    prior_infra_run(github, None)
+    assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
+    body = github.comments[0]["body"]
+    assert "integration" not in body
+    assert "could not be read" in body
+
+
+def test_a_retest_drops_prior_rows_when_the_gate_job_is_missing(github, tmp_path):
+    prior_infra_run(github, "failure")
+    github.jobs["100"] = github.jobs["100"][:1]
+    assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
+    assert "could not be read" in github.comments[0]["body"]
+
+
+@pytest.mark.parametrize(
+    "state, gate",
+    [
+        (make_state(), "failure"),
+        (make_state(result="red [test]"), "success"),
+        (make_state(result="red [infra failed 1x]"), "cancelled"),
+        (make_state(), ""),
+    ],
+)
+def test_a_verdict_that_disagrees_with_this_run_gate_result_is_refused_before_any_write(github, tmp_path, capsys, state, gate):
+    assert upsert(tmp_path, state, gate=gate) == 1
+    assert github.requests == []
+    assert "comment: refused: gate result" in capsys.readouterr().err
 
 
 def test_an_unreadable_prior_run_still_writes_the_comment(github, tmp_path):
@@ -342,7 +410,7 @@ def test_cli_entry_point_creates_the_comment(github, tmp_path):
     path.write_text(json.dumps(make_state()), encoding="utf-8")
     env = {**os.environ, "GITHUB_TOKEN": TOKEN, "GITHUB_REPOSITORY": REPO, "GITHUB_API_URL": github.url, "GITHUB_SERVER_URL": SERVER}
     result = subprocess.run(
-        [sys.executable, "-m", "core.comment", "upsert", "--pr", "7", "--marker", MARKER, "--state", str(path), "--run-url", RUN_URL],
+        [sys.executable, "-m", "core.comment", "upsert", "--pr", "7", "--marker", MARKER, "--state", str(path), "--run-url", RUN_URL, "--gate-result", "success"],
         cwd=ROOT,
         env=env,
         capture_output=True,
