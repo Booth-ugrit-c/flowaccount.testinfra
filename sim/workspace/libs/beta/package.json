@@ -1,0 +1,12 @@
+{
+  "name": "@sim/beta",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "@sim/shared": "0.0.0"
+  },
+  "scripts": {
+    "test": "jest"
+  }
+}
