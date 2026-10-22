@@ -1,6 +1,6 @@
 name: sim-gate
 
-run-name: ${{ format('sim-gate {0} {1} from {2}{3}', inputs.stack, inputs.pr_branch, inputs.base, inputs.retest_of != '' && format(' retest of {0} (Retest)', inputs.retest_of) || '') }}
+run-name: ${{ format('sim-gate {0} {1} from {2}{3}{4}', inputs.stack, inputs.pr_branch, inputs.base, inputs.lanes != '' && format(' lanes {0}', inputs.lanes) || '', inputs.retest_of != '' && format(' retest of {0} (Retest)', inputs.retest_of) || '') }}
 
 on:
   workflow_dispatch:

@@ -471,9 +471,27 @@ MUTATIONS = {
     ),
     "the run name with the retest marker in the middle": (
         TOP,
-        "format('sim-gate {0} {1} from {2}{3}'",
-        "format('sim-gate {0}{3} {1} from {2}'",
+        "format('sim-gate {0} {1} from {2}{3}{4}'",
+        "format('sim-gate {0}{4} {1} from {2}{3}'",
         "must contain 'retest of 1' and end with (Retest)",
+    ),
+    "the run name hiding a partial lane selection": (
+        TOP,
+        "inputs.lanes != '' && format(' lanes {0}', inputs.lanes) || ''",
+        "''",
+        "must name the selected lanes unit",
+    ),
+    "the run name naming lanes on a full run": (
+        TOP,
+        "inputs.lanes != '' && format(' lanes {0}', inputs.lanes) || ''",
+        "format(' lanes {0}', inputs.lanes)",
+        "must not name lanes when every lane runs",
+    ),
+    "the run name with the lanes after the retest marker": (
+        TOP,
+        "format('sim-gate {0} {1} from {2}{3}{4}'",
+        "format('sim-gate {0} {1} from {2}{4}{3}'",
+        "must end with ' retest of 7 (Retest)'",
     ),
     "the retest stand-in on a push trigger": (
         RETEST,

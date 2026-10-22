@@ -608,6 +608,16 @@ def run_name_violations(docs):
                 found.append(f"{ENTRY}: run-name {title!r} for retest_of {retest} must contain 'retest of {retest}' and end with (Retest)")
         elif "(Retest)" in title or "retest of" in title:
             found.append(f"{ENTRY}: run-name {title!r} without retest_of must not say retest")
+    for lanes in (None, "", "unit", "integration,unit"):
+        for retest in ("", "7"):
+            context = dict(base, **{"inputs.retest_of": retest}, **({} if lanes is None else {"inputs.lanes": lanes}))
+            title = str(evaluate(text, context))
+            if lanes and f" lanes {lanes}" not in title:
+                found.append(f"{ENTRY}: run-name {title!r} must name the selected lanes {lanes}")
+            if not lanes and " lanes " in title:
+                found.append(f"{ENTRY}: run-name {title!r} must not name lanes when every lane runs")
+            if retest and not title.endswith(f" retest of {retest} (Retest)"):
+                found.append(f"{ENTRY}: run-name {title!r} must end with ' retest of {retest} (Retest)'")
     return found
 
 
