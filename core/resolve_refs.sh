@@ -47,6 +47,10 @@ esac
 case $default in
     '' | -* | *..* | *[!A-Za-z0-9._/-]*) refuse "the default branch name is not usable" ;;
 esac
+case ${GITHUB_REF:-} in
+    refs/heads/?*) ;;
+    *) refuse "the gate must be dispatched from a branch, not a tag" ;;
+esac
 matches "$known_lanes" '[a-z0-9_]+( [a-z0-9_]+)*' || refuse "the workflow must name its lanes"
 matches "$lanes" '([a-z0-9_]+(,[a-z0-9_]+)*)?' || refuse "lanes must be a comma-separated list of lane names"
 for lane in $(printf '%s\n' "$lanes" | tr ',' ' '); do
@@ -71,7 +75,7 @@ if [ -n "$pr_sha" ] && [ -n "$pr_branch" ]; then
     branch_tip=$(git rev-parse --verify --quiet "refs/remotes/origin/$pr_branch^{commit}") || refuse "pr_branch is not a branch of this repository"
     git merge-base --is-ancestor "$head_sha" "$branch_tip" || refuse "pr_sha is not on pr_branch"
 fi
-if [ -n "$pr_branch" ] && [ "${GITHUB_REF:-}" = "refs/heads/$pr_branch" ] && [ "$head_sha" != "${GITHUB_SHA:-}" ]; then
+if [ "$head_sha" != "${GITHUB_SHA:-}" ]; then
     refuse "the tested commit is not the dispatched commit; the gate check would land on a commit this run did not test"
 fi
 
