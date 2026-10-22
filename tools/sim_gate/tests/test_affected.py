@@ -207,6 +207,9 @@ def test_project_file_change_counts_as_a_change_of_that_project():
     "Sim.slnx",
     "nuget.config",
     "NuGet.Config",
+    ".editorconfig",
+    ".globalconfig",
+    "src/Core/.editorconfig",
     "src/Directory.Build.props",
     "src/Core/Directory.Build.props",
     "build/common.props",
@@ -224,7 +227,7 @@ def test_deleted_project_directory_marks_everything_affected():
     assert names(result["build"]) == FULL_ORDER
 
 
-@pytest.mark.parametrize("file", ["README.md", "docs/guide.md", "tools/other.py", "sim/other/Directory.Build.props", "sim/other/global.json"])
+@pytest.mark.parametrize("file", ["README.md", "docs/guide.md", "tools/other.py", "sim/other/Directory.Build.props", "sim/other/global.json", "sim/other/.editorconfig"])
 def test_a_file_outside_the_root_selects_nothing(file):
     assert pick([file]) == {"build": [], "test": []}
 
@@ -239,6 +242,9 @@ def test_a_file_outside_the_root_selects_nothing(file):
     "sim/NuGet.Config",
     "global.json",
     "sim/global.json",
+    ".editorconfig",
+    "sim/.editorconfig",
+    ".globalconfig",
 ])
 def test_a_build_wide_file_in_an_ancestor_of_the_root_marks_every_project_affected(file):
     result = pick([file])
