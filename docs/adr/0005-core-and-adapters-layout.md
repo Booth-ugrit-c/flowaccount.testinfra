@@ -27,7 +27,7 @@ Order:
 Checks (`core/tests/test_layering.py`, each shown red on a mutated file or a planted file before green):
 - No module under `core/`, tests included, imports `adapters`.
 - No production file under `core/` names an adapter path by text, which covers `python -m` and `sh` calls.
-- No production module under `adapters/` uses a `_`-prefixed name from a `core` module, in any import or attribute spelling.
+- No production module under `adapters/` uses a `_`-prefixed name from a `core` module, in any import spelling or as an attribute of a name bound to a core module; an attribute of an imported class or function (`Store._exchange`) is not caught.
 - `pyproject.toml` testpaths contain `core`, every test file in the repository sits under a testpath, and a default `pytest --collect-only` reaches every core test file.
 
 ## Consequences
