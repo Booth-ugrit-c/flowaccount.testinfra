@@ -41,6 +41,7 @@ def repo(tmp_path_factory):
     git(upstream, "checkout", "-q", "--detach", first)
     pull = commit(upstream, "pull")
     git(upstream, "update-ref", "refs/pull/7/head", pull)
+    git(upstream, "branch", "refs/x", main_tip)
     git(upstream, "checkout", "-q", "main")
     clone = root / "clone"
     subprocess.run([*GIT, "clone", "-q", upstream.as_posix(), clone.as_posix()], check=True, capture_output=True)
@@ -132,6 +133,19 @@ def test_a_base_on_a_branch_resolves_to_its_sha(repo, resolve, base, wanted):
 def test_a_base_outside_the_branches_is_refused(repo, resolve, base):
     proc, out = resolve("topic", base=base)
     assert proc.returncode != 0 and out == {}
+
+
+def test_a_branch_named_like_a_ref_is_refused_as_head(resolve):
+    proc, out = resolve("refs/x")
+    assert proc.returncode != 0 and out == {}
+    assert "::error::head must be a branch" in proc.stdout
+
+
+@pytest.mark.parametrize("base", ["refs/x", "refs/remotes/origin/refs/x"])
+def test_a_branch_named_like_a_ref_is_refused_as_base(resolve, base):
+    proc, out = resolve("topic", base=base)
+    assert proc.returncode != 0 and out == {}
+    assert "::error::base must name a commit" in proc.stdout
 
 
 def test_a_base_on_no_branch_is_refused(repo, resolve):
