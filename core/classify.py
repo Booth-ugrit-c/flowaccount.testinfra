@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -23,7 +24,11 @@ INFRA_STEPS = ("Set up job", "Hygiene", "Set up .NET", "Health", "Services")
 TIMEOUT_TEXT = "exceeded the maximum execution time"
 CANCEL_TEXT = "the operation was canceled"
 ANNOTATIONS_OK = "annotations.ok"
+RUN_RESULTS = ("success", "failure", "cancelled", "skipped")
 MAX_PAGES = 5
+JOB_WAIT_SECONDS = 45
+clock = time.monotonic
+sleep = time.sleep
 
 
 def load_fingerprints(path=FINGERPRINTS):
@@ -63,12 +68,14 @@ def step_conclusions(job):
     return {s["name"]: s.get("conclusion") for s in steps if isinstance(s, dict) and "name" in s}
 
 
-def classify(markers, job, log, fingerprints, annotations_read=False):
+def classify(markers, job, log, fingerprints, annotations_read=False, run_result=None):
     if TRIPWIRE_MARKER in markers:
         return "infra"
+    if run_result == "success":
+        return "pass" if "test-end" in markers else "test"
     if job is None:
         return "test"
-    conclusion = job.get("conclusion")
+    conclusion = run_result or job.get("conclusion")
     steps = step_conclusions(job)
     if conclusion == "success":
         return "pass" if "test-end" in markers or steps.get(STEP_TEST) == "success" else "test"
@@ -92,7 +99,7 @@ def classify(markers, job, log, fingerprints, annotations_read=False):
     return "test"
 
 
-def classify_dir(job_dir, fingerprints=None):
+def classify_dir(job_dir, fingerprints=None, run_result=None):
     job_dir = Path(job_dir)
     return classify(
         read_markers(job_dir / "markers"),
@@ -100,6 +107,7 @@ def classify_dir(job_dir, fingerprints=None):
         read_log(job_dir / "log.txt"),
         load_fingerprints() if fingerprints is None else fingerprints,
         (job_dir / ANNOTATIONS_OK).is_file(),
+        run_result,
     )
 
 
@@ -119,7 +127,39 @@ def request_json(url, token):
     return json.loads(request(url, token))
 
 
+def settled(job):
+    return job.get("status") == "completed" and job.get("conclusion") is not None
+
+
+def shown(value):
+    if value is None:
+        return "null"
+    return value if isinstance(value, str) and re.fullmatch(r"[a-z_]{1,32}", value) else "other"
+
+
 def find_job(base, repository, env, token, suffix):
+    job = fetch_job_once(base, repository, env, token, suffix)
+    if settled(job):
+        return job
+    print(
+        f"classify: job not final (status={shown(job.get('status'))} conclusion={shown(job.get('conclusion'))}),"
+        f" re-reading for up to {JOB_WAIT_SECONDS}s",
+        file=sys.stderr,
+    )
+    start, delay = clock(), 1
+    while not settled(job):
+        remaining = start + JOB_WAIT_SECONDS - clock()
+        if remaining <= 0:
+            print(f"classify: job still not final after {JOB_WAIT_SECONDS}s, classifying it as read", file=sys.stderr)
+            return job
+        sleep(min(delay, remaining))
+        delay = min(delay * 2, 8)
+        job = fetch_job_once(base, repository, env, token, suffix)
+    print(f"classify: job final after {clock() - start:.0f}s", file=sys.stderr)
+    return job
+
+
+def fetch_job_once(base, repository, env, token, suffix):
     run_id, attempt = env["GITHUB_RUN_ID"], env["GITHUB_RUN_ATTEMPT"]
     if not (run_id.isdigit() and attempt.isdigit()):
         raise ValueError("run")
@@ -178,7 +218,7 @@ def save_annotations(job_dir, text):
     (job_dir / ANNOTATIONS_OK).write_text("", encoding="utf-8")
 
 
-def fetch_attempt(env, job_dir, job_suffix, artifact_name):
+def fetch_attempt(env, job_dir, job_suffix, artifact_name, run_result=None):
     token, repository, base = env.get("GITHUB_TOKEN", ""), env.get("GITHUB_REPOSITORY", ""), api_base(env)
     if not token or base is None or not REPOSITORY.match(repository):
         return
@@ -186,16 +226,16 @@ def fetch_attempt(env, job_dir, job_suffix, artifact_name):
         return
     job_dir = Path(job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        job = find_job(base, repository, env, token, job_suffix)
-    except Exception as exc:
-        print(f"classify: job lookup failed: {type(exc).__name__}", file=sys.stderr)
-        return
-    (job_dir / "job.json").write_text(json.dumps(slim(job)), encoding="utf-8")
-    for label, step in (
-        ("annotations", lambda: save_annotations(job_dir, fetch_annotations(base, repository, token, job["id"]))),
-        ("markers", lambda: fetch_markers(base, repository, token, env["GITHUB_RUN_ID"], artifact_name, job_dir / "markers")),
-    ):
+    steps = [("markers", lambda: fetch_markers(base, repository, token, env["GITHUB_RUN_ID"], artifact_name, job_dir / "markers"))]
+    if run_result != "success":
+        try:
+            job = find_job(base, repository, env, token, job_suffix)
+        except Exception as exc:
+            print(f"classify: job lookup failed: {type(exc).__name__}", file=sys.stderr)
+            return
+        (job_dir / "job.json").write_text(json.dumps(slim(job)), encoding="utf-8")
+        steps.insert(0, ("annotations", lambda: save_annotations(job_dir, fetch_annotations(base, repository, token, job["id"]))))
+    for label, step in steps:
         try:
             step()
         except Exception as exc:
@@ -208,11 +248,15 @@ def main(argv):
     parser.add_argument("--fetch-job")
     parser.add_argument("--fetch-artifact")
     parser.add_argument("--reason-file")
+    parser.add_argument("--run-result")
     args = parser.parse_args(argv)
+    run_result = args.run_result if args.run_result in RUN_RESULTS else None
+    if args.run_result is not None and run_result is None:
+        print("classify: unknown run result, using the jobs API conclusion", file=sys.stderr)
     try:
         if args.fetch_job and args.fetch_artifact:
-            fetch_attempt(os.environ, args.job_dir, args.fetch_job, args.fetch_artifact)
-        verdict = classify_dir(args.job_dir)
+            fetch_attempt(os.environ, args.job_dir, args.fetch_job, args.fetch_artifact, run_result)
+        verdict = classify_dir(args.job_dir, run_result=run_result)
         tripped = TRIPWIRE_MARKER in read_markers(Path(args.job_dir) / "markers")
         if tripped:
             print("classify: infra: cache tripwire", file=sys.stderr)

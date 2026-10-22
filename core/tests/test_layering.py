@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 
 import core
+import workflow_policy as policy
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE = ROOT / "core"
@@ -69,6 +70,32 @@ def test_text_detector_sees_shell_and_module_paths():
 
 def test_core_resolves_to_this_repository():
     assert {Path(entry).resolve() for entry in core.__path__} == {CORE}
+    assert core.__file__ is not None and Path(core.__file__).resolve() == CORE / "__init__.py"
+
+
+def test_a_core_package_elsewhere_on_the_path_is_not_run(tmp_path):
+    shadow = tmp_path / "core"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("", encoding="utf-8")
+    (shadow / "gate.py").write_text('print("shadow core ran")\n', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "core.gate", "--lane", "unit=pass"],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "shadow core ran" not in result.stdout + result.stderr
+    assert "gate: pass" in result.stdout
+
+
+def test_workflow_lint_runs_the_policy_and_layering_tests_by_path():
+    jobs = policy.parse((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    runs = [str(step.get("run", "")).split() for step in jobs["workflow-lint"]["steps"]]
+    pytest_runs = [words for words in runs if words[:3] == ["python", "-m", "pytest"]]
+    assert len(pytest_runs) == 1, runs
+    assert {"core/tests/test_workflow_policy.py", "core/tests/test_layering.py"} <= set(pytest_runs[0][3:])
 
 
 def test_every_test_file_sits_under_a_testpath():

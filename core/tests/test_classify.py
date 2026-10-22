@@ -351,3 +351,144 @@ def test_a_cancel_signal_in_a_log_without_the_ok_marker_is_not_trusted(tmp_path)
     assert classify.classify_dir(job) == "infra"
     (job / "annotations.ok").unlink()
     assert classify.classify_dir(job) == "test"
+
+
+class FakeClock:
+    def __init__(self):
+        self.now, self.sleeps = 0.0, []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        assert seconds > 0
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def fake_clock(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(classify, "clock", clock)
+    monkeypatch.setattr(classify, "sleep", clock.sleep)
+    return clock
+
+
+def run_job(status, conclusion):
+    step = "success" if conclusion == "success" else None
+    return job_entry(7, TARGET_JOB, conclusion) | {
+        "status": status,
+        "steps": [{"name": "Test", "conclusion": step, "number": 1, "status": status}],
+    }
+
+
+def serve_jobs_in_turn(api, *answers):
+    reads = []
+
+    def body():
+        reads.append(len(reads))
+        job = answers[min(len(reads), len(answers)) - 1]
+        return b"{}" if job is None else json.dumps({"total_count": 1, "jobs": [job]}).encode()
+
+    serve_attempt(api, [], artifacts=live_artifact(), zip_bytes=make_zip({"build": "", "test-start": "", "test-end": ""}))
+    api.serve(JOBS_PATH + "?per_page=100&page=1", body)
+    return reads
+
+
+@pytest.mark.parametrize("status", ["queued", "in_progress", "completed"])
+def test_a_job_read_before_its_conclusion_is_published_is_read_again_until_final(api, tmp_path, fake_clock, capsys, status):
+    reads = serve_jobs_in_turn(api, run_job(status, None), run_job("completed", "success"))
+    fetch(api, tmp_path)
+    assert classify.classify_dir(tmp_path / "job") == "pass"
+    assert len(reads) == 2 and fake_clock.sleeps == [1]
+    err = capsys.readouterr().err
+    assert f"classify: job not final (status={status} conclusion=null)" in err
+    assert "classify: job final after 1s" in err
+
+
+def test_a_final_job_on_the_first_read_is_not_read_again(api, tmp_path, fake_clock, capsys):
+    reads = serve_jobs_in_turn(api, run_job("completed", "success"))
+    fetch(api, tmp_path)
+    assert classify.classify_dir(tmp_path / "job") == "pass"
+    assert (len(reads), fake_clock.sleeps, capsys.readouterr().err) == (1, [], "")
+
+
+def test_a_job_never_final_within_the_cap_is_classified_as_read_and_says_so(api, tmp_path, fake_clock, capsys):
+    reads = serve_jobs_in_turn(api, run_job("in_progress", None))
+    fetch(api, tmp_path)
+    assert classify.classify_dir(tmp_path / "job") == "test"
+    assert sum(fake_clock.sleeps) == classify.JOB_WAIT_SECONDS == 45
+    assert max(fake_clock.sleeps) <= 8 and len(reads) == len(fake_clock.sleeps) + 1
+    assert f"classify: job still not final after {classify.JOB_WAIT_SECONDS}s, classifying it as read" in capsys.readouterr().err
+
+
+def test_an_api_failure_while_waiting_is_a_failed_lookup(api, tmp_path, fake_clock, capsys):
+    reads = serve_jobs_in_turn(api, run_job("in_progress", None), None)
+    fetch(api, tmp_path)
+    assert len(reads) == 2 and not (tmp_path / "job" / "job.json").exists()
+    assert classify.classify_dir(tmp_path / "job") == "test"
+    assert "classify: job lookup failed: KeyError" in capsys.readouterr().err
+
+
+LOST = "the runner has received a shutdown signal"
+STALE = {"status": "queued", "conclusion": None, "steps": []}
+
+
+def failed_step(name):
+    return {"status": "completed", "conclusion": "failure", "steps": [{"name": name, "conclusion": "failure"}]}
+
+
+@pytest.mark.parametrize(
+    ("run_result", "markers", "job", "log", "expected"),
+    [
+        ("success", {"test-start", "test-end"}, STALE, "", "pass"),
+        ("success", {"test-start", "test-end"}, None, "", "pass"),
+        ("success", {"test-start"}, {"status": "completed", "conclusion": "success", "steps": [{"name": "Test", "conclusion": "success"}]}, "", "test"),
+        ("success", set(), None, "", "test"),
+        ("success", {"test-end", "cache-tripwire"}, None, "", "infra"),
+        ("failure", {"test-start", "test-end"}, {"status": "completed", "conclusion": "success", "steps": []}, "", "test"),
+        ("failure", {"health"}, failed_step("Health"), "", "infra"),
+        ("failure", {"build", "test-start"}, failed_step("Test"), "", "test"),
+        ("cancelled", {"build"}, STALE, LOST, "infra"),
+        ("cancelled", {"build"}, STALE, "", "test"),
+        ("skipped", set(), STALE, "", "test"),
+    ],
+)
+def test_the_run_job_result_from_the_workflow_is_authoritative(run_result, markers, job, log, expected):
+    assert classify.classify(markers, job, log, classify.load_fingerprints(), True, run_result) == expected
+
+
+def test_a_successful_run_job_passes_on_its_markers_without_asking_the_jobs_api(api, tmp_path, fake_clock, capsys):
+    reads = serve_jobs_in_turn(api, run_job("queued", None))
+    classify.fetch_attempt(api_env(api), tmp_path / "job", "run unit-attempt", "markers-unit-attempt", "success")
+    assert classify.classify_dir(tmp_path / "job", run_result="success") == "pass"
+    assert (reads, fake_clock.sleeps, capsys.readouterr().err) == ([], [], "")
+    assert not (tmp_path / "job" / "job.json").exists()
+
+
+def test_cli_passes_a_successful_run_job_while_the_jobs_api_still_says_queued(api, tmp_path):
+    serve_jobs_in_turn(api, run_job("queued", None))
+    args = ["--fetch-job", "run unit-attempt", "--fetch-artifact", "markers-unit-attempt", "--run-result", "success"]
+    out = run_cli(tmp_path / "job", api_env(api), args)
+    assert (out.stdout, out.stderr) == ("pass\n", "")
+    assert not any(path.startswith(JOBS_PATH) for path in api.paths())
+
+
+def test_cli_without_the_test_end_marker_is_test_even_when_the_run_job_succeeded(api, tmp_path):
+    serve_attempt(api, [], artifacts=live_artifact(), zip_bytes=make_zip({"build": "", "test-start": ""}))
+    args = ["--fetch-job", "run unit-attempt", "--fetch-artifact", "markers-unit-attempt", "--run-result", "success"]
+    assert run_cli(tmp_path / "job", api_env(api), args).stdout == "test\n"
+
+
+def test_a_failed_run_job_with_a_stale_jobs_api_waits_then_stays_fail_closed(api, tmp_path, fake_clock, capsys):
+    reads = serve_jobs_in_turn(api, run_job("in_progress", None))
+    classify.fetch_attempt(api_env(api), tmp_path / "job", "run unit-attempt", "markers-unit-attempt", "failure")
+    assert classify.classify_dir(tmp_path / "job", run_result="failure") == "test"
+    assert len(reads) > 1 and sum(fake_clock.sleeps) == classify.JOB_WAIT_SECONDS
+    assert "classify: job still not final" in capsys.readouterr().err
+
+
+def test_cli_ignores_an_unknown_run_result_and_says_so(tmp_path):
+    out = run_cli(case_dir(tmp_path, "pass_full"), args=["--run-result", "neutral"])
+    assert out.stdout == "pass\n"
+    assert "classify: unknown run result" in out.stderr
