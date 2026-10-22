@@ -302,6 +302,8 @@ def test_leaf_change_changes_only_the_leaf(repo):
     "sim/dotnet/Sim.sln",
     "sim/Directory.Build.targets",
     "Directory.Packages.props",
+    ".editorconfig",
+    "sim/.globalconfig",
 ])
 def test_build_wide_file_change_changes_every_key(repo, relative):
     before = keys_of(repo)
@@ -756,4 +758,27 @@ def test_a_header_the_http_layer_rejects_is_a_miss_without_the_signature(monkeyp
     code, out, err = restore(monkeypatch, capsys, repo)
     assert (code, out.strip()) == (0, "miss")
     assert err.startswith("miss: ") and "Signature=" not in err and "Traceback" not in err
+    assert store.requests == []
+
+
+def test_tracked_file_inside_a_bin_or_obj_directory_is_refused(monkeypatch, capsys, repo):
+    hidden = project_dir(repo) / "Logic" / "bin" / "Hidden.cs"
+    hidden.parent.mkdir(parents=True)
+    hidden.write_text("class Hidden { }", encoding="utf-8")
+    git(repo, "add", "-f", "-A")
+    git(repo, "commit", "-q", "-m", "hidden")
+    with pytest.raises(cache.CacheError, match="bin or obj"):
+        keys_of(repo)
+    for command in ("key", "restore"):
+        code, out, err = run(monkeypatch, capsys, repo, command, "--project", CORE, "--root", ROOT, "--sdk", SDK)
+        assert code == 2 and out == "" and "bin or obj" in err
+
+
+@pytest.mark.parametrize("field", ["region", "secret"])
+def test_a_surrogate_in_a_signed_value_is_a_store_error_not_a_crash(store, field):
+    values = {"region": "us-east-1", "secret": READ_SECRET}
+    values[field] += chr(0xDCFF)
+    client = cache.Store(store.endpoint, READ_ID, values["secret"], values["region"], 2.0)
+    with pytest.raises(cache.StoreError):
+        client.get("sim-cache", "x.tar.gz")
     assert store.requests == []

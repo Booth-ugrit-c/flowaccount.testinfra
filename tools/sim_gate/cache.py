@@ -107,11 +107,11 @@ class Store:
             "x-amz-content-sha256": payload_hash,
             "x-amz-date": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         }
-        headers["authorization"] = sign(method, path, headers, payload_hash, self.key_id, self.secret, self.region)
         deadline = time.monotonic() + self.timeout
         factory = http.client.HTTPSConnection if self.secure else http.client.HTTPConnection
         connection = factory(self.hostname, self.port, timeout=self.timeout)
         try:
+            headers["authorization"] = sign(method, path, headers, payload_hash, self.key_id, self.secret, self.region)
             connection.request(method, path, body=body or None, headers=headers)
             response = connection.getresponse()
             if sink is not None and response.status == 200:
@@ -186,10 +186,6 @@ def _locate(cwd: Path, root: str) -> tuple:
     return top, _relative(top, os.path.join(cwd, root))
 
 
-def _in_output(inner: str) -> bool:
-    return any(part in OUTPUT_DIRS for part in inner.split("/")[:-1])
-
-
 def _under(path: str, directory: str) -> bool:
     return directory == "" or path.startswith(directory + "/")
 
@@ -215,8 +211,10 @@ def compute_keys(cwd: Path, root: str, config: str, sdk: str) -> dict:
         name for name in _git(["ls-files", "-z", "--cached", "--", root_rel or ".", *specs], top)
         .decode("utf-8").split("\0") if name
     ))
-    under_root = [name for name in listing
-                  if _under(name, root_rel) and not _in_output(name[len(root_rel) + 1:] if root_rel else name)]
+    under_root = [name for name in listing if _under(name, root_rel)]
+    for name in under_root:
+        if any(part in OUTPUT_DIRS for part in (name[len(root_rel) + 1:] if root_rel else name).split("/")[:-1]):
+            raise CacheError(f"{name} is tracked inside a bin or obj directory")
     sources = {}
     for name in under_root:
         if name.endswith(".csproj"):

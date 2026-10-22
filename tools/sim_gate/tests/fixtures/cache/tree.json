@@ -1,6 +1,8 @@
 {
   "files": {
     "Directory.Packages.props": "<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup></Project>",
+    ".editorconfig": "root = true",
+    "sim/.globalconfig": "is_global = true",
     "docs/notes.txt": "unrelated notes",
     "sim/README.md": "unrelated ancestor file",
     "sim/Directory.Build.targets": "<Project><Target Name=\"Noop\" /></Project>",

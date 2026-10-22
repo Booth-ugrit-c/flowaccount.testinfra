@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Optional, Sequence, Union
 
 DEFAULT_ROOT = "sim/dotnet"
-BUILD_WIDE_NAMES = frozenset({"global.json", "nuget.config"})
+BUILD_WIDE_NAMES = frozenset({"global.json", "nuget.config", ".editorconfig", ".globalconfig"})
 BUILD_WIDE_PREFIXES = ("directory.build.", "directory.packages.")
 BUILD_WIDE_SUFFIXES = (".sln", ".slnx")
 INERT_NAMES = frozenset({".gitignore", ".gitattributes"})
