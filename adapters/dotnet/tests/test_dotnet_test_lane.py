@@ -23,6 +23,10 @@ FILTER = "Category!=integration"
 
 FAKE_DOTNET = """\
 #!/bin/sh
+if [ "$1" = nuget ]; then
+    echo "warmup cwd=$(basename "$(pwd)") $*" >> "$T/events.log"
+    exit "${FAKE_WARMUP_RC:-0}"
+fi
 echo "cwd=$(basename "$(pwd)") $*" >> "$T/dotnet.log"
 project=
 dir=
@@ -137,7 +141,7 @@ def test_a_failing_project_fails_the_lane_and_the_others_still_finish(lab):
     lab.behaviour("Core.Tests 0 1 3", "Utils.Tests 1 0 2")
     result = lab.run(lab.listing(CORE, UTILS), parallel="1")
     assert result.returncode == 1, result.stdout + result.stderr
-    assert lab.events() == ["start Core.Tests", "end Core.Tests", "start Utils.Tests", "end Utils.Tests"]
+    assert lab.events() == [WARMUP, "start Core.Tests", "end Core.Tests", "start Utils.Tests", "end Utils.Tests"]
     assert f"test_lane: fail {CORE}" in result.stdout
     assert f"test_lane: pass {UTILS}" in result.stdout
     assert lab.count(CORE) == "3" and lab.count(UTILS) == "2"
@@ -216,6 +220,28 @@ def test_an_empty_list_runs_nothing_and_passes(lab):
     assert result.returncode == 0
     assert "0 projects selected" in result.stdout
     assert lab.calls() == []
+    assert lab.events() == []
+
+
+WARMUP = "warmup cwd=dotnet nuget --version"
+
+
+def test_the_sdk_first_use_setup_runs_once_from_the_solution_root_before_any_project(lab):
+    lab.behaviour("Core.Tests 0 0 3", "Utils.Tests 0 0 2")
+    result = lab.run(lab.listing(CORE, UTILS), parallel="2")
+    assert result.returncode == 0, result.stdout + result.stderr
+    events = lab.events()
+    assert events[0] == WARMUP
+    assert events.count(WARMUP) == 1
+
+
+def test_a_failed_first_use_setup_fails_the_lane_before_any_project(lab):
+    lab.behaviour("Core.Tests 0 0 3")
+    result = lab.run(lab.listing(CORE), FAKE_WARMUP_RC="1")
+    assert result.returncode == 1
+    assert "first-use setup failed" in result.stderr
+    assert lab.calls() == []
+    assert lab.count(CORE) is None
 
 
 @pytest.mark.parametrize("parallel", ["", "x", "-1", "1.5"])

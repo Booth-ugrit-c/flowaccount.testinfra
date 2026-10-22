@@ -75,6 +75,12 @@ printf '%s\n' "$projects" | while IFS= read -r project; do
     rm -f "$counts/$key.trx" "$counts/$key.count" "$counts/$key.count.tmp" "$counts/$key.log"
 done
 
+# Parallel first runs race in the SDK's first-use setup.
+(cd "$ROOT" && dotnet_cmd nuget --version) > /dev/null || {
+    echo "test_lane: dotnet first-use setup failed" >&2
+    exit 1
+}
+
 status=0
 printf '%s\n' "$projects" | tr '\n' '\0' |
     xargs -0 -n 1 -P "$parallel" sh "$SELF" --one "$counts" "$filter" || status=1
