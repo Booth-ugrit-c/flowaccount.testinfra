@@ -27,6 +27,7 @@ MAX_EXTRACTED_BYTES = 4 << 30
 MAX_MEMBERS = 500_000
 INTEGRITY = re.compile(r"sha512-[A-Za-z0-9+/]{86}==")
 BRANCH = re.compile(r"[A-Za-z0-9._/-]+")
+REGISTRY = "https://registry.npmjs.org/"
 
 
 class CacheError(Exception):
@@ -58,8 +59,8 @@ def verify_lockfile(data: bytes) -> None:
             continue
         if not INTEGRITY.fullmatch(str(entry.get("integrity", ""))):
             raise LockfileError(f"lockfile entry {path} has no sha512 integrity; npm could not verify it")
-        if not str(entry.get("resolved", "")).startswith("https://"):
-            raise LockfileError(f"lockfile entry {path} does not resolve over https")
+        if not str(entry.get("resolved", "")).startswith(REGISTRY):
+            raise LockfileError(f"lockfile entry {path} does not resolve from {REGISTRY}")
 
 
 def _major(tool: str, override: Optional[str]) -> str:

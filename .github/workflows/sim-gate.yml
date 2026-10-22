@@ -37,6 +37,7 @@ on:
         type: choice
         options:
           - dotnet
+          - workspace
       lanes:
         description: Comma-separated lanes to run; empty runs every lane
         required: false
@@ -102,13 +103,14 @@ jobs:
           BASE_REF: ${{ inputs.base }}
           RETEST_OF: ${{ inputs.retest_of }}
           LANES: ${{ inputs.lanes }}
-          KNOWN_LANES: unit integration
+          KNOWN_LANES: ${{ inputs.stack == 'workspace' && 'unit' || 'unit integration' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: sh core/resolve_refs.sh
 
   build:
     name: build
     needs: validate
+    if: ${{ inputs.stack == 'dotnet' }}
     permissions:
       contents: read
       actions: read
@@ -179,6 +181,28 @@ jobs:
       artifact: ${{ needs.build.outputs.artifact }}
       parallel: 1
 
+  workspace:
+    name: workspace
+    needs: validate
+    if: ${{ inputs.stack == 'workspace' && needs.validate.outputs.lane_unit == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      id-token: write
+    uses: ./.github/workflows/tpl-workspace-unit.yml # zizmor: ignore[self-repository]
+    with:
+      pr_number: ${{ needs.validate.outputs.pr_number }}
+      pr_branch: ${{ needs.validate.outputs.pr_branch }}
+      pr_author: ${{ needs.validate.outputs.pr_author }}
+      pr_sha: ${{ needs.validate.outputs.pr_sha }}
+      base_sha: ${{ needs.validate.outputs.base_sha }}
+      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}
+      runner_label: ${{ vars.SIM_LAB_LABEL_WORKSPACE }}
+      cache: ${{ inputs.cache }}
+      retest: ${{ needs.validate.outputs.retest_of != '' || github.run_attempt != '1' }}
+      sim_fault: ${{ inputs.fault != 'none' && inputs.fault || '' }}
+
   gate:
     name: gate
     needs:
@@ -186,6 +210,7 @@ jobs:
       - build
       - unit
       - integration
+      - workspace
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -223,18 +248,32 @@ jobs:
           INTEGRATION_VERDICT: ${{ needs.integration.outputs.verdict }}
           INTEGRATION_REASON: ${{ needs.integration.outputs.reason }}
           INTEGRATION_EXECUTED: ${{ needs.integration.outputs.executed }}
+          WORKSPACE_VERDICT: ${{ needs.workspace.outputs.verdict }}
+          WORKSPACE_REASON: ${{ needs.workspace.outputs.reason }}
+          WORKSPACE_EXECUTED: ${{ needs.workspace.outputs.executed }}
         run: |
           set -eu
-          set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"
-          case "$UNIT_SELECTED" in
-              true) set -- "$@" --lane "unit=${UNIT_VERDICT}" --reason "unit=${UNIT_REASON}" --executed "unit=${UNIT_EXECUTED}" ;;
-              false) echo "lane unit: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
-              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
-          esac
-          case "$INTEGRATION_SELECTED" in
-              true) set -- "$@" --lane "integration=${INTEGRATION_VERDICT}" --reason "integration=${INTEGRATION_REASON}" --executed "integration=${INTEGRATION_EXECUTED}" ;;
-              false) echo "lane integration: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
-              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+          case "$STACK" in
+              dotnet)
+                  set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"
+                  case "$UNIT_SELECTED" in
+                      true) set -- "$@" --lane "unit=${UNIT_VERDICT}" --reason "unit=${UNIT_REASON}" --executed "unit=${UNIT_EXECUTED}" ;;
+                      false) echo "lane unit: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+                      *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+                  esac
+                  case "$INTEGRATION_SELECTED" in
+                      true) set -- "$@" --lane "integration=${INTEGRATION_VERDICT}" --reason "integration=${INTEGRATION_REASON}" --executed "integration=${INTEGRATION_EXECUTED}" ;;
+                      false) echo "lane integration: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+                      *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+                  esac
+                  ;;
+              workspace)
+                  case "$UNIT_SELECTED" in
+                      true) set -- --lane "unit=${WORKSPACE_VERDICT}" --reason "unit=${WORKSPACE_REASON}" --executed "unit=${WORKSPACE_EXECUTED}" ;;
+                      *) echo "gate: red [test]: stack workspace has no selected lane"; exit 1 ;;
+                  esac
+                  ;;
+              *) echo "gate: red [test]: unknown stack"; exit 1 ;;
           esac
           case "$RETEST" in
               true) set -- "$@" --retest ;;

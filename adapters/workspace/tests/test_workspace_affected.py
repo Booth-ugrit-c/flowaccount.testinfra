@@ -240,6 +240,98 @@ def test_cli_never_prints_an_empty_test_list(monkeypatch, capsys, repo):
     assert code == 0 and set(json.loads(out)["test"]) == ALL_TESTS
 
 
+def select_after_alpha_change(monkeypatch, capsys, repo, relative, source):
+    commit(repo, relative, source)
+    base = git(repo, "rev-parse", "HEAD")
+    head = commit(repo, f"{ALPHA}/index.js", "exports.name = () => 'alpha-v2';\n")
+    code, out, err = run(monkeypatch, capsys, repo, "--base", base, "--head", head, "--graph", str(repo / "graph.json"))
+    assert code == 0, err
+    return json.loads(out)
+
+
+@pytest.mark.parametrize("source", [
+    'const a = require("../alpha/index");\n',
+    "const a = require('../alpha');\n",
+    'const a = require("@sim/alpha");\n',
+    'const a = require("@sim/alpha/index.js");\n',
+    'import { name } from "../alpha/index.js";\n',
+    'import "../alpha/index.js";\n',
+    'export * from "../alpha/index.js";\n',
+    'const a = import("../alpha/index.js");\n',
+    'const a = require.resolve("../alpha/index");\n',
+    'jest.mock("../alpha/index");\n',
+    'const a = jest.requireActual("@sim/alpha");\n',
+    "const a = require(`../alpha/index`);\n",
+])
+def test_an_undeclared_reference_to_a_changed_project_selects_all(monkeypatch, capsys, repo, source):
+    result = select_after_alpha_change(monkeypatch, capsys, repo, f"{SOLO}/index.js", source)
+    assert set(result["test"]) == ALL_TESTS and result["all"] is True
+    assert f"{SOLO}/index.js" in result["reason"]
+
+
+@pytest.mark.parametrize("source", [
+    "const a = require(name);\n",
+    "const a = require(`../${name}/index`);\n",
+    "const a = import(name);\n",
+    'const { createRequire } = require("node:module");\nconst load = createRequire(__filename);\n',
+])
+def test_a_reference_the_scan_cannot_read_selects_all(monkeypatch, capsys, repo, source):
+    result = select_after_alpha_change(monkeypatch, capsys, repo, f"{SOLO}/index.js", source)
+    assert set(result["test"]) == ALL_TESTS and "not a string literal" in result["reason"]
+
+
+@pytest.mark.parametrize("relative, source", [
+    (f"{SOLO}/index.js", 'const t = require("../../../tools/helper");\n'),
+    (f"{SOLO}/index.js", 'const t = require("/opt/helper");\n'),
+    (f"{ROOT}/oracle.js", 'const a = require("@sim/solo");\n'),
+    (f"{ROOT}/oracle.js", 'const a = require("./libs/solo/index");\n'),
+    (f"{SOLO}/jest.config.json", '{"moduleNameMapper": {"^shared$": "<rootDir>/../alpha/index.js"}}\n'),
+    (f"{SOLO}/tsconfig.json", '{"compilerOptions": {"paths": {"a": ["../alpha/index.ts"]}}}\n'),
+    (f"{SOLO}/jest.config.json", '{"roots": ["../../../tools"]}\n'),
+])
+def test_a_reference_outside_the_graph_selects_all(monkeypatch, capsys, repo, relative, source):
+    result = select_after_alpha_change(monkeypatch, capsys, repo, relative, source)
+    assert set(result["test"]) == ALL_TESTS and relative in result["reason"]
+
+
+@pytest.mark.parametrize("relative, source", [
+    (f"{GAMMA}/index.js", 'const a = require("@sim/alpha");\nconst s = require("../../libs/shared/index");\n'),
+    (f"{GAMMA}/index.test.js", 'const o = require("../../oracle");\nconst g = require("./index");\n'),
+    (f"{SOLO}/index.js", 'const fs = require("node:fs");\nconst j = require("jest");\nimport path from "path";\n'),
+    (f"{SOLO}/README.md", 'require("../alpha")\n'),
+    (f"{ROOT}/oracle.js", 'const fs = require("node:fs");\n'),
+    (f"{GAMMA}/jest.config.json", '{"roots": ["<rootDir>", "../../libs/alpha"], "testMatch": ["./**/*.test.js"]}\n'),
+    (f"{ROOT}/nx.json", '{"$schema": "./node_modules/nx/schemas/nx-schema.json"}\n'),
+])
+def test_a_declared_or_non_project_reference_keeps_the_selection(monkeypatch, capsys, repo, relative, source):
+    result = select_after_alpha_change(monkeypatch, capsys, repo, relative, source)
+    assert set(result["test"]) == {ALPHA, GAMMA} and result["all"] is False
+
+
+def test_a_tracked_symlink_selects_all(monkeypatch, capsys, repo):
+    commit(repo, f"{SOLO}/index.js", "exports.name = () => 'solo';\n")
+    blob = subprocess.run([*GIT, "hash-object", "-w", "--stdin"], cwd=repo, input="../alpha", text=True,
+                          check=True, capture_output=True).stdout.strip()
+    git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob},{SOLO}/linked")
+    git(repo, "commit", "-q", "-m", "link")
+    git(repo, "reset", "-q", "--hard")
+    base = git(repo, "rev-parse", "HEAD")
+    head = commit(repo, f"{ALPHA}/index.js", "exports.name = () => 'alpha-v2';\n")
+    code, out, err = run(monkeypatch, capsys, repo, "--base", base, "--head", head, "--graph", str(repo / "graph.json"))
+    assert code == 0, err
+    result = json.loads(out)
+    assert set(result["test"]) == ALL_TESTS and f"{SOLO}/linked" in result["reason"]
+
+
+def test_the_shipped_sim_has_no_undeclared_reference_and_the_scan_reads_it():
+    top = Path(__file__).resolve().parents[3]
+    graph = affected.parse_graph(GRAPH, ROOT)
+    references = affected.references(top, ROOT)
+    assert (f"{GAMMA}/index.js", "@sim/alpha") in references
+    assert (f"{GAMMA}/index.test.js", "../../oracle") in references
+    assert affected.undeclared_reference(graph, top, ROOT) is None
+
+
 def test_sim_workspace_declares_every_dependency_it_imports():
     workspace = Path(__file__).resolve().parents[3] / ROOT
     declared = {}
@@ -271,6 +363,11 @@ def test_nx_entry_refuses_a_missing_or_escaping_executable(tmp_path, manifest):
         write(tmp_path / "node_modules" / "nx" / "package.json", json.dumps(manifest))
     with pytest.raises(affected.GraphError):
         affected.nx_entry(tmp_path)
+
+
+def test_sim_workspace_never_runs_install_scripts():
+    npmrc = (Path(__file__).resolve().parents[3] / ROOT / ".npmrc").read_text(encoding="utf-8")
+    assert "ignore-scripts=true" in [line.strip() for line in npmrc.splitlines()]
 
 
 def test_sim_workspace_never_replays_a_cached_test_result():

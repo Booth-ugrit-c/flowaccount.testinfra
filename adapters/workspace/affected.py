@@ -5,6 +5,7 @@ import heapq
 import json
 import os
 import posixpath
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,17 @@ TEST_TARGET = "test"
 EXTERNAL_PREFIX = "npm:"
 INERT_SUFFIXES = (".md",)
 NX_TIMEOUT = 600
+SOURCE_SUFFIXES = (".js", ".cjs", ".mjs", ".jsx", ".ts", ".cts", ".mts", ".tsx")
+CALL = re.compile(
+    r"\b(?:require(?:\.resolve)?|import"
+    r"|jest\.(?:mock|doMock|unmock|setMock|requireActual|requireMock|createMockFromModule))"
+    r"""\s*\(\s*(?:(['"])([^'"\n]*)\1|`([^`$\n]*)`)?"""
+)
+STATIC = re.compile(r"""\b(?:from|import)\s*(['"])([^'"\n]*)\1""")
+CREATE_REQUIRE = re.compile(r"\bcreateRequire\b")
+ROOT_DIR_TOKEN = "<rootDir>/"
+SYMLINK_MODE = "120000"
+LOCKFILE = "package-lock.json"
 
 
 class GraphError(Exception):
@@ -188,12 +200,139 @@ def order(graph: Mapping[str, Project], names: Iterable[str]) -> list:
     return result + sorted(wanted - set(result))
 
 
+def _closure(graph: Mapping[str, Project], name: str) -> set:
+    found, pending = set(), [name]
+    while pending:
+        current = pending.pop()
+        if current not in found:
+            found.add(current)
+            pending.extend(graph[current].dependencies)
+    return found
+
+
+def _specifiers(text: str) -> tuple:
+    found, dynamic = [], False
+    for match in CALL.finditer(text):
+        literal = match.group(2) if match.group(1) else match.group(3)
+        if literal:
+            found.append(literal)
+        else:
+            dynamic = True
+    found += [match.group(2) for match in STATIC.finditer(text) if match.group(2)]
+    return found, dynamic or bool(CREATE_REQUIRE.search(text))
+
+
+def _package(specifier: str) -> str:
+    parts = specifier.split("/")
+    return "/".join(parts[:2]) if specifier.startswith("@") else parts[0]
+
+
+def _tracked(cwd: Path, root: str) -> list:
+    out = _git(["ls-files", "-s", "-z", "--", root], cwd)
+    entries = []
+    for record in out.decode("utf-8").split("\0"):
+        if record:
+            meta, _, name = record.partition("\t")
+            if "node_modules" not in name.split("/"):
+                entries.append((meta.split(" ")[0], name))
+    return entries
+
+
+def _json_paths(node) -> list:
+    if isinstance(node, dict):
+        return [path for value in node.values() for path in _json_paths(value)]
+    if isinstance(node, list):
+        return [path for value in node for path in _json_paths(value)]
+    if isinstance(node, str):
+        text = node[len(ROOT_DIR_TOKEN):] if node.startswith(ROOT_DIR_TOKEN) else node
+        return [text] if text.startswith(("./", "../")) or text in (".", "..") else []
+    return []
+
+
+def _scan(cwd: Path, root: str):
+    for mode, file in _tracked(cwd, root.strip("/")):
+        if mode == SYMLINK_MODE:
+            yield file, None, "is a symlink the scan cannot follow"
+            continue
+        is_json = file.endswith(".json") and posixpath.basename(file) != LOCKFILE
+        if not (file.endswith(SOURCE_SUFFIXES) or is_json):
+            continue
+        try:
+            text = (cwd / file).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise GraphError(f"cannot read {file}: {exc}") from None
+        if is_json:
+            try:
+                paths = _json_paths(json.loads(text))
+            except ValueError:
+                yield file, None, "is not plain JSON the scan can read"
+                continue
+            yield from ((file, path, None) for path in paths)
+            continue
+        specifiers, dynamic = _specifiers(text)
+        if dynamic:
+            yield file, None, "has a require or import that is not a string literal"
+        yield from ((file, specifier, None) for specifier in specifiers)
+
+
+def _package_names(graph: Mapping[str, Project], cwd: Path) -> dict:
+    names = {name: name for name in graph}
+    for project in graph.values():
+        if project.root is None:
+            continue
+        try:
+            manifest = json.loads((cwd / project.root / "package.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(manifest, dict) and isinstance(manifest.get("name"), str):
+            names.setdefault(manifest["name"], project.name)
+    return names
+
+
+def references(cwd: Path, root: str) -> list:
+    return [(file, specifier) for file, specifier, problem in _scan(cwd, root) if problem is None]
+
+
+def _owners(graph: Mapping[str, Project], path: str) -> set:
+    return {p.name for p in graph.values() if p.root is not None and (path == p.root or _inside(path, p.root))}
+
+
+def undeclared_reference(graph: Mapping[str, Project], cwd: Path, root: str) -> Optional[str]:
+    root = root.strip("/")
+    packages = _package_names(graph, cwd)
+    closures = {name: _closure(graph, name) for name in graph}
+    for file, specifier, problem in _scan(cwd, root):
+        if problem is not None:
+            return f"{file} {problem}"
+        if specifier.startswith("/"):
+            return f"{file} references the absolute path {specifier}"
+        if specifier.startswith(("./", "../")) or specifier in (".", ".."):
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(file), specifier))
+            if target != root and not _inside(target, root):
+                return f"{file} references {specifier} outside the workspace"
+            targets = _owners(graph, target)
+        elif _package(specifier) in packages:
+            targets = {packages[_package(specifier)]}
+        else:
+            continue
+        if not targets:
+            continue
+        owners = _owners(graph, file)
+        if not owners:
+            return f"{file} belongs to no project and references {specifier}"
+        for owner in owners:
+            if not targets & closures[owner]:
+                return f"{file} references {specifier} with no graph edge from {owner}"
+    return None
+
+
 def _label(project: Project) -> str:
     return project.root if project.root is not None else project.name
 
 
-def select(graph: Mapping[str, Project], changed: Iterable[str], root: str) -> dict:
+def select(graph: Mapping[str, Project], changed: Iterable[str], root: str, hidden: Optional[str] = None) -> dict:
     seeds, reason = changed_projects(graph, list(changed), root)
+    reason = reason or hidden
     chosen = with_dependents(graph, seeds) if reason is None else set()
     if reason is None and not any(graph[name].has_test for name in chosen):
         reason = f"no changed file maps to a project with a {TEST_TARGET} target"
@@ -321,7 +460,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         check_checkout(args.head, args.root, cwd)
         graph = read_graph(args.root, cwd, args.graph)
-        result = select(graph, changed_files(args.base, args.head, cwd), args.root)
+        hidden = undeclared_reference(graph, cwd, args.root)
+        result = select(graph, changed_files(args.base, args.head, cwd), args.root, hidden)
     except (GraphError, GitError) as exc:
         print(f"workspace.affected: {exc}", file=sys.stderr)
         return 2

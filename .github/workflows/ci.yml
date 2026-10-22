@@ -78,6 +78,33 @@ jobs:
           SIM_CACHE_HOST: localhost
         run: dotnet test -c Release --no-build --nologo --filter "Category=integration"
 
+  workspace:
+    name: workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sim/workspace
+    env:
+      NX_DAEMON: "false"
+      NX_NO_CLOUD: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: sim/workspace/.nvmrc
+          package-manager-cache: "false"
+      - name: Install
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Unit tests
+        run: npx nx run-many -t test --skip-nx-cache --outputStyle=static
+      - name: npm audit
+        run: npm audit --audit-level=high --package-lock-only
+
   workflow-lint:
     name: workflow-lint
     runs-on: ubuntu-24.04
@@ -114,6 +141,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: zizmor --config .github/zizmor.yml .github/workflows
       - name: shellcheck
-        run: shellcheck .githooks/pre-push core/*.sh adapters/dotnet/*.sh
+        run: shellcheck .githooks/pre-push core/*.sh adapters/*/*.sh
       - name: Policy and layering tests
         run: python -m pytest -q core/tests/test_workflow_policy.py core/tests/test_layering.py

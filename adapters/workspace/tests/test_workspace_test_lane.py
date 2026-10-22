@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+import core.zero_tests as zero_tests
+
 SCRIPT = Path(__file__).resolve().parents[1] / "test_lane.sh"
 SHELLS = [shutil.which(name) for name in ("bash", "sh") if shutil.which(name)]
 
@@ -176,6 +178,36 @@ def test_a_project_whose_tests_were_all_skipped_writes_a_zero_count_for_the_guar
     assert result.returncode == 0, result.stdout + result.stderr
     assert (lab.counts / "_sim_alpha.count").read_text(encoding="ascii") == "0\n"
     assert lab.count(SOLO) == "2\n"
+
+
+def guard(lab, listing, capsys):
+    code = zero_tests.main(["--list", listing, "--counts", lab.counts.as_posix()])
+    return code, capsys.readouterr().out.splitlines()
+
+
+def test_the_real_guard_turns_an_all_skipped_project_red_while_the_lane_passes(lab, capsys):
+    lab.behaviour(f"{ALPHA} 0 0 0 0 3", f"{SOLO} 0 0 2 0 0")
+    listing = lab.listing(ALPHA, SOLO)
+    assert lab.run(listing).returncode == 0
+    code, lines = guard(lab, listing, capsys)
+    assert code == 1
+    assert f"::error title=zero tests::{ALPHA} ran 0 tests" in lines and f"executed=2 {SOLO}" in lines
+
+
+def test_the_real_guard_turns_a_project_without_a_jest_report_red(lab, capsys):
+    lab.behaviour(f"{ALPHA} 0 0 none", f"{SOLO} 0 0 2 0 0")
+    listing = lab.listing(ALPHA, SOLO)
+    assert lab.run(listing).returncode == 0
+    code, lines = guard(lab, listing, capsys)
+    assert code == 1 and f"::error title=zero tests::no test count for {ALPHA}" in lines
+
+
+def test_the_real_guard_passes_and_counts_each_project_that_executed_tests(lab, capsys):
+    lab.behaviour(f"{ALPHA} 0 1 1 1 4", f"{SOLO} 0 0 2 0 0")
+    listing = lab.listing(ALPHA, SOLO)
+    assert lab.run(listing).returncode == 1
+    code, lines = guard(lab, listing, capsys)
+    assert code == 0 and lines == [f"executed=2 {ALPHA}", f"executed=2 {SOLO}", "2 projects selected"]
 
 
 @pytest.mark.parametrize("report", ["none", "malformed"])
