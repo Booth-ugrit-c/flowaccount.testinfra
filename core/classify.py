@@ -11,7 +11,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from tools.sim_gate.route import REPOSITORY, TIMEOUT_SECONDS, MAX_BODY_BYTES, NoRedirect, allowed_url, api_base
+from core.route import REPOSITORY, TIMEOUT_SECONDS, MAX_BODY_BYTES, NoRedirect, allowed_url, api_base
 
 FINGERPRINTS = Path(__file__).with_name("fingerprints.txt")
 PHASE_MARKERS = ("health", "services", "build", "test-start", "test-end")

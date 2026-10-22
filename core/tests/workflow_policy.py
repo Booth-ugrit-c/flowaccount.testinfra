@@ -512,8 +512,8 @@ def validate_violations(docs):
         "DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
     }
     resolve = steps[resolves[0]] if resolves else {}
-    if str(resolve.get("run", "")).strip() != "sh tools/sim_gate/resolve_refs.sh" or resolve.get("env") != wanted_env:
-        found.append("validate must resolve head and base with sh tools/sim_gate/resolve_refs.sh")
+    if str(resolve.get("run", "")).strip() != "sh core/resolve_refs.sh" or resolve.get("env") != wanted_env:
+        found.append("validate must resolve head and base with sh core/resolve_refs.sh")
     elif not checkouts or resolves[0] < checkouts[0]:
         found.append("validate must check out before it resolves")
     outputs = {name: f"${{{{ steps.resolve.outputs.{name} }}}}" for name in ("head_sha", "base_sha", "default_tip")}
@@ -549,8 +549,8 @@ def hygiene_violations(docs):
         return ["the attempt run job has no Hygiene step"]
     found = []
     step = steps[hygiene]
-    if step.get("run", "").strip() != "sh tools/sim_gate/prejob.sh":
-        found.append("the Hygiene step must run sh tools/sim_gate/prejob.sh")
+    if step.get("run", "").strip() != "sh core/prejob.sh":
+        found.append("the Hygiene step must run sh core/prejob.sh")
     guard = condition(str(step["if"])) if "if" in step else "${{ true }}"
     if not truthy(evaluate(guard, {"runner.environment": "self-hosted"})) or truthy(evaluate(guard, {"runner.environment": "github-hosted"})):
         found.append("the Hygiene step must run on self-hosted runners only")

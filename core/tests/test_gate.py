@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from tools.sim_gate import gate
+from core import gate
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 PASS = "pass"
 TEST = "red [test]"
@@ -91,7 +91,7 @@ def run_cli(args, summary_path=None):
     if summary_path is not None:
         env["GITHUB_STEP_SUMMARY"] = str(summary_path)
     return subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.gate", *args],
+        [sys.executable, "-m", "core.gate", *args],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,

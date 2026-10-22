@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 
 from gh_server import FakeGitHub
-from tools.sim_gate import classify
+from core import classify
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "classify.json").read_text())
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "gh" + "s_" + "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2"
 
 EXPECTED = {
@@ -117,7 +117,7 @@ def run_cli(job_dir, env_extra=None, args=()):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GITHUB_", "SIM_"))}
     env.update(env_extra or {})
     return subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.classify", "--job-dir", str(job_dir), *args],
+        [sys.executable, "-m", "core.classify", "--job-dir", str(job_dir), *args],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,

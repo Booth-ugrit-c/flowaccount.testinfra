@@ -7,7 +7,7 @@ import pytest
 
 import workflow_policy as policy
 
-WORKFLOWS = Path(__file__).resolve().parents[3] / ".github" / "workflows"
+WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 LANE = "sim-gate-lane.yml"
 ATTEMPT = "sim-gate-attempt.yml"
 TOP = "sim-gate.yml"
@@ -130,7 +130,7 @@ MUTATIONS = {
     ),
     "expression inside a run script": (
         ATTEMPT,
-        "        run: sh tools/sim_gate/prejob.sh",
+        "        run: sh core/prejob.sh",
         "        run: echo ${{ inputs.tag }}",
         "expression inside run",
     ),
@@ -226,9 +226,9 @@ MUTATIONS = {
     ),
     "validate back to a character check that admits pull request refs": (
         TOP,
-        "        run: sh tools/sim_gate/resolve_refs.sh\n",
+        "        run: sh core/resolve_refs.sh\n",
         "        run: echo ok\n",
-        "validate must resolve head and base with sh tools/sim_gate/resolve_refs.sh",
+        "validate must resolve head and base with sh core/resolve_refs.sh",
     ),
     "validate checking out the requested head instead of the dispatch commit": (
         TOP,
@@ -352,32 +352,32 @@ MUTATIONS = {
     ),
     "hygiene step deleted": (
         ATTEMPT,
-        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh\n",
+        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh\n",
         "",
         "has no Hygiene step",
     ),
     "hygiene step only on hosted runners": (
         ATTEMPT,
-        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh",
-        "        if: ${{ runner.environment == 'github-hosted' }}\n        run: sh tools/sim_gate/prejob.sh",
+        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh",
+        "        if: ${{ runner.environment == 'github-hosted' }}\n        run: sh core/prejob.sh",
         "self-hosted runners only",
     ),
     "hygiene step without a guard": (
         ATTEMPT,
-        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh",
-        "        run: sh tools/sim_gate/prejob.sh",
+        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh",
+        "        run: sh core/prejob.sh",
         "self-hosted runners only",
     ),
     "hygiene step running something else": (
         ATTEMPT,
-        "        run: sh tools/sim_gate/prejob.sh",
+        "        run: sh core/prejob.sh",
         "        run: echo skipped",
-        "must run sh tools/sim_gate/prejob.sh",
+        "must run sh core/prejob.sh",
     ),
     "hygiene step after the first dotnet step": (
         ATTEMPT,
-        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh\n      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n",
-        "      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh tools/sim_gate/prejob.sh\n",
+        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh\n      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n",
+        "      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh\n",
         "must come before",
     ),
     "retry still runs after a cache tripwire": (
@@ -896,5 +896,6 @@ def test_ci_shellchecks_the_hook_and_every_sim_gate_script():
     runs = [str(step.get("run", "")).split() for step in jobs["workflow-lint"]["steps"]]
     shellcheck = [words for words in runs if words[:1] == ["shellcheck"]]
     assert len(shellcheck) == 1, runs
-    assert {".githooks/pre-push", "tools/sim_gate/*.sh"} <= set(shellcheck[0][1:])
-    assert {path.name for path in (WORKFLOWS.parents[1] / "tools" / "sim_gate").glob("*.sh")} >= {"cache_build.sh", "resolve_refs.sh"}
+    assert {".githooks/pre-push", "core/*.sh", "tools/sim_gate/*.sh"} <= set(shellcheck[0][1:])
+    assert {path.name for path in (WORKFLOWS.parents[1] / "core").glob("*.sh")} >= {"kill_own_runner.sh", "prejob.sh", "resolve_refs.sh"}
+    assert {path.name for path in (WORKFLOWS.parents[1] / "tools" / "sim_gate").glob("*.sh")} >= {"cache_build.sh"}
