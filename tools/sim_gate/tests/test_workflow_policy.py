@@ -111,8 +111,8 @@ MUTATIONS = {
     ),
     "retry for any verdict through an or": (
         LANE,
-        "needs.route.outputs.target == 'onprem' }}\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-retry",
-        "needs.route.outputs.target == 'onprem' || needs.attempt.outputs.verdict == 'test' }}\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-retry",
+        "needs.route.outputs.target == 'onprem' }}\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n      id-token: write\n    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-retry",
+        "needs.route.outputs.target == 'onprem' || needs.attempt.outputs.verdict == 'test' }}\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n      id-token: write\n    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-retry",
         "retry runs=True for verdict 'test'",
     ),
     "retry without the on-prem condition": (
@@ -123,8 +123,8 @@ MUTATIONS = {
     ),
     "retry on the lab label": (
         LANE,
-        "      runner: ubuntu-24.04\n      fail_test: ${{ inputs.fail_test }}\n      kill_runner: ${{ inputs.simulate_kill == 'both' }}",
-        "      runner: ${{ inputs.lab_label }}\n      fail_test: ${{ inputs.fail_test }}\n      kill_runner: ${{ inputs.simulate_kill == 'both' }}",
+        "      runner: ubuntu-24.04\n      hosted: true\n      fail_test: ${{ inputs.fail_test }}\n      kill_runner: ${{ inputs.simulate_kill == 'both' }}",
+        "      runner: ${{ inputs.lab_label }}\n      hosted: true\n      fail_test: ${{ inputs.fail_test }}\n      kill_runner: ${{ inputs.simulate_kill == 'both' }}",
         "retry must run on a hosted label",
     ),
     "expression inside a run script": (
@@ -335,31 +335,73 @@ MUTATIONS = {
         ATTEMPT,
         "      - name: Join the tailnet\n        if: ${{ runner.environment == 'github-hosted' }}\n",
         "      - name: Join the tailnet\n",
-        "tailnet auth key may be used only by the tailscale action on a github-hosted runner",
+        "tailnet credentials may be used only by the tailscale action on a github-hosted runner",
     ),
     "tailnet join on self-hosted runners": (
         ATTEMPT,
         "      - name: Join the tailnet\n        if: ${{ runner.environment == 'github-hosted' }}\n",
         "      - name: Join the tailnet\n        if: ${{ runner.environment == 'self-hosted' }}\n",
-        "tailnet auth key may be used only by the tailscale action on a github-hosted runner",
+        "tailnet credentials may be used only by the tailscale action on a github-hosted runner",
     ),
-    "tailnet key read by another step": (
+    "tailnet client id read by another step": (
         ATTEMPT,
         "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n",
-        "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n          SIM_TAILNET_AUTHKEY: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
-        "tailnet auth key may be used only by the tailscale action",
+        "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n          SIM_TAILNET_CLIENT_ID: ${{ secrets.SIM_TAILNET_CLIENT_ID }}\n",
+        "tailnet credentials may be used only by the tailscale action",
     ),
-    "tailnet key read in the route job": (
+    "tailnet audience read in the route job": (
         LANE,
         "          LAB_LABEL: ${{ inputs.lab_label }}\n",
-        "          LAB_LABEL: ${{ inputs.lab_label }}\n          T: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
-        "secret SIM_TAILNET_AUTHKEY is read at a place that is not allowed",
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n          T: ${{ secrets.SIM_TAILNET_AUDIENCE }}\n",
+        "secret SIM_TAILNET_AUDIENCE is read at a place that is not allowed",
     ),
-    "tailnet key given to another action input": (
+    "tailnet credential given to another action input": (
         ATTEMPT,
-        "          authkey: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
-        "          authkey: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n          args: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
-        "secret SIM_TAILNET_AUTHKEY is read at a place that is not allowed",
+        "          audience: ${{ secrets.SIM_TAILNET_AUDIENCE }}\n",
+        "          audience: ${{ secrets.SIM_TAILNET_AUDIENCE }}\n          ping: ${{ secrets.SIM_TAILNET_AUDIENCE }}\n",
+        "secret SIM_TAILNET_AUDIENCE is read at a place that is not allowed",
+    ),
+    "tailscale with a stored auth key": (
+        ATTEMPT,
+        "          tags: tag:ci-sim\n",
+        "          tags: tag:ci-sim\n          authkey: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
+        "workload identity, not a stored auth key",
+    ),
+    "tailscale with a stored OAuth secret": (
+        ATTEMPT,
+        "          tags: tag:ci-sim\n",
+        "          tags: tag:ci-sim\n          oauth-secret: ${{ secrets.SIM_TAILNET_OAUTH_SECRET }}\n",
+        "workload identity, not a stored auth key",
+    ),
+    "tailscale with other tags": (
+        ATTEMPT,
+        "          tags: tag:ci-sim\n",
+        "          tags: tag:ci-sim,tag:lab-cache\n",
+        "must join with tags: tag:ci-sim",
+    ),
+    "tailscale without tags": (
+        ATTEMPT,
+        "          tags: tag:ci-sim\n",
+        "",
+        "must join with tags: tag:ci-sim",
+    ),
+    "tailscale accepting routes": (
+        ATTEMPT,
+        "          args: --accept-routes=false\n",
+        "",
+        "--accept-routes=false",
+    ),
+    "tailscale using its binary cache": (
+        ATTEMPT,
+        "          use-cache: \"false\"\n",
+        "          use-cache: \"true\"\n",
+        "must not use its binary cache",
+    ),
+    "tailscale without the audience": (
+        ATTEMPT,
+        "          audience: ${{ secrets.SIM_TAILNET_AUDIENCE }}\n",
+        "",
+        "needs oauth-client-id and audience",
     ),
     "cache endpoint read in the route job": (
         LANE,
@@ -439,11 +481,101 @@ MUTATIONS = {
         "          SIM_DEFAULT_BRANCH: ${{ inputs.head }}\n",
         "must pass the default branch name",
     ),
-    "environment on the attempt job": (
+    "the attempt job always writing": (
         ATTEMPT,
-        "    runs-on: ${{ inputs.runner }}\n    timeout-minutes: 25",
-        "    runs-on: ${{ inputs.runner }}\n    environment: sim-cache\n    timeout-minutes: 25",
-        "must not use an environment",
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: sim-cache-write\n",
+        "the attempt environment is 'sim-cache-write'",
+    ),
+    "the attempt job never writing": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: sim-cache-read\n",
+        "wanted 'sim-cache-write'",
+    ),
+    "the attempt job without an environment": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "",
+        "must choose its environment with an expression",
+    ),
+    "the attempt environment taken from the ref name so a tag named like the default branch writes": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: ${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "for ref refs/tags/main",
+    ),
+    "the attempt environment writing for any head": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "head topic",
+    ),
+    "the attempt environment writing with fail_test on": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "fail_test True",
+    ),
+    "the attempt environment writing from a lab runner": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "hosted False",
+    ),
+    "the attempt environment writing from a topic branch": (
+        ATTEMPT,
+        "    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "    environment: ${{ inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}\n",
+        "for ref refs/heads/topic",
+    ),
+    "a ref name read anywhere because a tag can carry the default branch name": (
+        ATTEMPT,
+        "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n",
+        "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n          WHERE: ${{ github.ref_name }}\n",
+        "github.ref_name is refused",
+    ),
+    "the route job without its environment so its secret would be empty": (
+        LANE,
+        "    environment: sim-route\n",
+        "",
+        "reads secrets without an environment",
+    ),
+    "the lane treating a lab label run as hosted": (
+        LANE,
+        "      hosted: ${{ needs.route.outputs.target != 'onprem' || inputs.lab_label == '' }}\n",
+        "      hosted: true\n",
+        "hosted input disagrees with the runner",
+    ),
+    "a hosted retry declared as not hosted": (
+        LANE,
+        "      hosted: true\n",
+        "      hosted: false\n",
+        "the retry must be hosted",
+    ),
+    "id-token write on the classify job": (
+        ATTEMPT,
+        "      actions: read\n      checks: read\n    outputs:",
+        "      actions: read\n      checks: read\n      id-token: write\n    outputs:",
+        "permission jobs.classify.permissions.id-token is write",
+    ),
+    "id-token write on the route job": (
+        LANE,
+        "    environment: sim-route\n",
+        "    environment: sim-route\n    permissions:\n      contents: read\n      id-token: write\n",
+        "permission jobs.route.permissions.id-token is write",
+    ),
+    "id-token write for the whole workflow": (
+        ATTEMPT,
+        "permissions:\n  contents: read\n\njobs:",
+        "permissions:\n  contents: read\n  id-token: write\n\njobs:",
+        "workflow permissions must be contents: read only",
+    ),
+    "the attempt job without id-token write so workload identity cannot work": (
+        ATTEMPT,
+        "      contents: read\n      id-token: write\n",
+        "      contents: read\n",
+        "exactly contents: read and id-token: write",
     ),
 }
 
@@ -571,6 +703,10 @@ def test_parser_refuses_what_it_cannot_read_instead_of_guessing(text):
         ("${{ x || y == 'a' && z == 'b' }}", {"x": "", "y": "a", "z": "b"}, True),
         ("${{ x || y == 'a' && z == 'b' }}", {"x": "", "y": "a", "z": "c"}, False),
         ("literal", {}, "literal"),
+        ("${{ format('refs/heads/{0}', a) }}", {"a": "main"}, "refs/heads/main"),
+        ("${{ r == format('refs/heads/{0}', a) }}", {"a": "main", "r": "refs/tags/main"}, False),
+        ("${{ r == format('refs/heads/{0}', a) }}", {"a": "main", "r": "refs/heads/main"}, True),
+        ("${{ format('{0}-{1}', a, b) }}", {"a": "x", "b": "y"}, "x-y"),
     ],
 )
 def test_expression_semantics_follow_github(expression, context, expected):
@@ -584,8 +720,9 @@ def test_expression_evaluator_refuses_what_it_does_not_model(expression):
 
 
 SAVE_GUARD = (
-    "        if: ${{ github.ref_name == github.event.repository.default_branch"
-    " && inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}\n"
+    "        if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+    " && inputs.head == github.event.repository.default_branch && inputs.fail_test == false"
+    " && runner.environment == 'github-hosted' }}\n"
 )
 
 
@@ -596,28 +733,29 @@ def with_save_guard(copy, guard):
 def test_the_bare_form_of_the_save_guard_is_accepted_too(copy):
     with_save_guard(
         copy,
-        "github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch"
-        " && inputs.fail_test == false",
+        "github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch"
+        " && inputs.fail_test == false && runner.environment == 'github-hosted'",
     )
     assert policy.violations(copy) == []
+
+
+GATED = "must itself be gated on the default branch"
 
 
 @pytest.mark.parametrize(
     "guard, message",
     [
-        (None, "must itself be gated on the default branch"),
-        ("${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == false }}", "must itself be gated on the default branch"),
-        ("${{ inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}", "must itself be gated on the default branch"),
-        ("${{ github.ref_name == github.event.repository.default_branch && inputs.head != '' && inputs.fail_test == false }}", "must itself be gated on the default branch"),
-        ("${{ github.ref_name != '' && inputs.fail_test == false }}", "must itself be gated on the default branch"),
-        ("${{ always() }}", "must itself be gated on the default branch"),
-        ("${{ github.ref_name != github.event.repository.default_branch }}", "must itself be gated on the default branch"),
-        ("${{ github.event_name == 'workflow_dispatch' }}", "must itself be gated on the default branch"),
-        (
-            "${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch }}",
-            "must not run when fail_test is on",
-        ),
-        ("${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == true }}", "must itself be gated on the default branch"),
+        (None, GATED),
+        ("${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && runner.environment == 'github-hosted' }}", "must not run when fail_test is on"),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'self-hosted' }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ github.ref != '' && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}", GATED),
+        ("${{ always() }}", GATED),
+        ("${{ github.event_name == 'workflow_dispatch' }}", GATED),
+        ("${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == true && runner.environment == 'github-hosted' }}", GATED),
     ],
 )
 def test_a_cache_save_step_that_can_run_off_the_default_branch_or_with_fail_test_is_refused(copy, guard, message):

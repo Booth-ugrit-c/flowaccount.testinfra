@@ -80,6 +80,7 @@ jobs:
       contents: read
       actions: read
       checks: read
+      id-token: write
     uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]
     with:
       tag: ${{ inputs.lane }}-attempt
@@ -87,6 +88,7 @@ jobs:
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
       runner: ${{ needs.route.outputs.target == 'onprem' && inputs.lab_label || 'ubuntu-24.04' }}
+      hosted: ${{ needs.route.outputs.target != 'onprem' || inputs.lab_label == '' }}
       fail_test: ${{ inputs.fail_test }}
       kill_runner: ${{ inputs.simulate_kill == 'both' || inputs.simulate_kill == 'onprem' && needs.route.outputs.target == 'onprem' }}
 
@@ -100,6 +102,7 @@ jobs:
       contents: read
       actions: read
       checks: read
+      id-token: write
     uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]
     with:
       tag: ${{ inputs.lane }}-retry
@@ -107,5 +110,6 @@ jobs:
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
       runner: ubuntu-24.04
+      hosted: true
       fail_test: ${{ inputs.fail_test }}
       kill_runner: ${{ inputs.simulate_kill == 'both' }}

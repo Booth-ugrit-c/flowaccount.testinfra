@@ -18,6 +18,10 @@ on:
       runner:
         required: true
         type: string
+      hosted:
+        description: True when the runner is a fresh GitHub-hosted VM
+        required: true
+        type: boolean
       fail_test:
         required: false
         default: false
@@ -42,6 +46,10 @@ jobs:
     name: run ${{ inputs.tag }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 25
+    environment: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || 'sim-cache-read' }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,7 +127,10 @@ jobs:
         if: ${{ runner.environment == 'github-hosted' }}
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
-          authkey: ${{ secrets.SIM_TAILNET_AUTHKEY }}
+          oauth-client-id: ${{ secrets.SIM_TAILNET_CLIENT_ID }}
+          audience: ${{ secrets.SIM_TAILNET_AUDIENCE }}
+          tags: tag:ci-sim
+          args: --accept-routes=false
           use-cache: "false"
       - name: Cache tripwire
         env:
@@ -180,7 +191,7 @@ jobs:
           touch "$MARKERS/test-end"
           exit "$status"
       - name: Save cache
-        if: ${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}
+        if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.head == github.event.repository.default_branch && inputs.fail_test == false && runner.environment == 'github-hosted' }}
         env:
           SIM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}

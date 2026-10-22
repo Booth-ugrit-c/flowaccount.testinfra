@@ -117,3 +117,31 @@ def test_a_missing_or_malformed_affected_file_is_refused(tmp_path):
 def test_the_graph_comes_from_the_working_tree_not_from_a_stale_selection(tmp_path):
     assert plan.lane_tests([API_INTEGRATION, CORE_TESTS], "integration") == [API_INTEGRATION]
     assert plan.lane_tests([API_INTEGRATION, CORE_TESTS], "unit") == [CORE_TESTS]
+
+
+def test_the_unit_lane_also_plans_an_affected_project_that_no_test_depends_on(tmp_path):
+    proc = run(tmp_path, {"build": [OTHER, API], "test": []}, "unit", "build")
+    assert set(lines(proc)) == {OTHER, API, SERVICE, CORE, DATA, UTILS}
+
+
+def test_the_unit_lane_plans_affected_projects_with_their_dependencies_in_order(tmp_path):
+    plan_ = lines(run(tmp_path, {"build": [API], "test": [CORE_TESTS]}, "unit", "build"))
+    position = {path: index for index, path in enumerate(plan_)}
+    assert {API, SERVICE, CORE, DATA, UTILS, SUPPORT, CORE_TESTS} == set(plan_)
+    assert position[SERVICE] < position[API] and position[CORE] < position[SERVICE]
+
+
+def test_the_unit_lane_never_plans_the_integration_project_from_the_build_list(tmp_path):
+    plan_ = lines(run(tmp_path, {"build": [API_INTEGRATION, CORE], "test": []}, "unit", "build"))
+    assert plan_ == [CORE]
+
+
+def test_the_integration_lane_stays_seeded_by_its_tests_only(tmp_path):
+    assert lines(run(tmp_path, {"build": [OTHER, API], "test": []}, "integration", "build")) == []
+    plan_ = lines(run(tmp_path, {"build": [OTHER], "test": [API_INTEGRATION]}, "integration", "build"))
+    assert OTHER not in plan_ and API_INTEGRATION in plan_
+
+
+def test_an_unknown_project_in_the_build_list_is_refused(tmp_path):
+    proc = run(tmp_path, {"build": ["sim/dotnet/src/Ghost/Ghost.csproj"], "test": []}, "unit", "build")
+    assert proc.returncode == 2 and b"Ghost" in proc.stderr

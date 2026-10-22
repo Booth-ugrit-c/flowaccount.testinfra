@@ -17,6 +17,10 @@ def lane_tests(tests: Sequence[str], lane: str) -> list:
     return [path for path in tests if (INTEGRATION_MARKER in path) == wanted]
 
 
+def unit_extras(build: Sequence[str]) -> list:
+    return [str(path) for path in build if INTEGRATION_MARKER not in str(path)]
+
+
 def read_graph(root: str, cwd: Path) -> dict:
     base = cwd / root
     files = {
@@ -57,7 +61,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         selection = json.loads(Path(args.affected).read_text(encoding="utf-8"))
         tests = lane_tests([str(path) for path in selection["test"]], args.lane)
         if args.emit == "build":
-            result = build_plan(read_graph(args.root, Path.cwd()), tests)
+            seeds = tests + (unit_extras(selection["build"]) if args.lane == "unit" else [])
+            result = build_plan(read_graph(args.root, Path.cwd()), seeds)
         else:
             result = tests
     except (OSError, ValueError, KeyError, TypeError, affected.GraphError) as exc:

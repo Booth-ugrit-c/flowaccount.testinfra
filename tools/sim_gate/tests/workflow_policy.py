@@ -140,7 +140,7 @@ def parse(text):
     return document
 
 
-TOKEN = re.compile(r"""\s*(?:(\|\||&&|==|!=)|('(?:[^']|'')*')|(!?[A-Za-z_]\w*\(\))|([A-Za-z_][\w.-]*)|(.))""")
+TOKEN = re.compile(r"""\s*(?:(\|\||&&|==|!=)|('(?:[^']|'')*')|(!?[A-Za-z_]\w*\(\))|(format\()|([,)])|([A-Za-z_][\w.-]*)|(.))""")
 
 
 def truthy(value):
@@ -162,11 +162,15 @@ class Expression:
         text = text.strip()
         while position < len(text):
             match = TOKEN.match(text, position)
-            if match.group(5):
-                raise Unsupported(f"unsupported character {match.group(5)!r} in {text!r}")
+            if match.group(7):
+                raise Unsupported(f"unsupported character {match.group(7)!r} in {text!r}")
             position = match.end()
-            op, string, function, path, _ = match.groups()
-            if op:
+            op, string, function, call, punct, path, _ = match.groups()
+            if call:
+                self.tokens.append(("fn", "format"))
+            elif punct:
+                self.tokens.append(("punct", punct))
+            elif op:
                 self.tokens.append(("op", op))
             elif string:
                 self.tokens.append(("val", string[1:-1].replace("''", "'")))
@@ -188,6 +192,19 @@ class Expression:
 
     def atom(self):
         kind, value = self.tokens[self.position]
+        if kind == "fn":
+            self.position += 1
+            arguments = [self.disjunction()]
+            while self.tokens[self.position] == ("punct", ","):
+                self.position += 1
+                arguments.append(self.disjunction())
+            if self.tokens[self.position] != ("punct", ")"):
+                raise Unsupported("unterminated format call")
+            self.position += 1
+            template = str(arguments[0])
+            for index, argument in enumerate(arguments[1:]):
+                template = template.replace("{" + str(index) + "}", str(argument))
+            return template
         if kind != "val":
             raise Unsupported("operand expected")
         self.position += 1
@@ -266,8 +283,17 @@ READER_PREFIX = "SIM_CACHE_READ"
 
 
 ENDPOINT_NAMES = ("SIM_CACHE_ENDPOINT_LAB", "SIM_CACHE_ENDPOINT_TAILNET")
-TAILNET_KEY = "SIM_TAILNET_AUTHKEY"
+TAILNET_INPUTS = {"SIM_TAILNET_CLIENT_ID": "oauth-client-id", "SIM_TAILNET_AUDIENCE": "audience"}
 ATTEMPT = "sim-gate-attempt.yml"
+ID_TOKEN_PLACES = {
+    ("sim-gate.yml", ("jobs", "unit", "permissions")),
+    ("sim-gate.yml", ("jobs", "integration", "permissions")),
+    ("sim-gate-lane.yml", ("jobs", "attempt", "permissions")),
+    ("sim-gate-lane.yml", ("jobs", "retry", "permissions")),
+    (ATTEMPT, ("jobs", "run", "permissions")),
+}
+WRITE_ENVIRONMENT = "sim-cache-write"
+READ_ENVIRONMENT = "sim-cache-read"
 
 
 def in_attempt_run_step(name, path, section):
@@ -285,8 +311,8 @@ def secret_allowed(name, path, secret, value):
             and path[2] == "steps"
             and path[4:5] == ("env",)
         )
-    if secret == TAILNET_KEY:
-        return value.strip() == "${{ secrets." + secret + " }}" and key == "authkey" and in_attempt_run_step(name, path, "with")
+    if secret in TAILNET_INPUTS:
+        return value.strip() == "${{ secrets." + secret + " }}" and key == TAILNET_INPUTS[secret] and in_attempt_run_step(name, path, "with")
     if secret in ENDPOINT_NAMES or secret.startswith((READER_PREFIX, WRITER_PREFIX)):
         return exact and in_attempt_run_step(name, path, "env")
     return False
@@ -305,15 +331,19 @@ def secret_violations(docs):
     return found
 
 
+SAVE_BASE = {"github.event.repository.default_branch": "main", "inputs.fail_test": False, "runner.environment": "github-hosted"}
+SAVE_OK = dict(SAVE_BASE, **{"github.ref": "refs/heads/main", "github.ref_name": "main", "inputs.head": "main"})
+SAVE_REFUSED = [
+    dict(SAVE_OK, **{"github.ref": "refs/heads/topic", "github.ref_name": "topic"}),
+    dict(SAVE_OK, **{"github.ref": "refs/tags/main", "github.ref_name": "main"}),
+    dict(SAVE_OK, **{"inputs.head": "topic"}),
+    dict(SAVE_OK, **{"runner.environment": "self-hosted"}),
+]
+
+
 def default_branch_only(guard):
-    base = {"github.event.repository.default_branch": "main", "inputs.fail_test": False}
-    default_branch = dict(base, **{"github.ref_name": "main", "inputs.head": "main"})
-    other_ref = dict(base, **{"github.ref_name": "topic", "inputs.head": "main"})
-    other_head = dict(base, **{"github.ref_name": "main", "inputs.head": "topic"})
-    return (
-        truthy(evaluate(condition(guard), default_branch))
-        and not truthy(evaluate(condition(guard), other_ref))
-        and not truthy(evaluate(condition(guard), other_head))
+    return truthy(evaluate(condition(guard), SAVE_OK)) and not any(
+        truthy(evaluate(condition(guard), context)) for context in SAVE_REFUSED
     )
 
 
@@ -323,22 +353,74 @@ def hosted_only(guard):
     )
 
 
+def environment_violations(docs):
+    found = []
+    run = docs[ATTEMPT]["jobs"]["run"]
+    expression = run.get("environment")
+    if not isinstance(expression, str):
+        return ["the attempt run job must choose its environment with an expression"]
+    base = {"github.event.repository.default_branch": "main"}
+    for ref in ("refs/heads/main", "refs/heads/topic", "refs/tags/main", "refs/heads/main2"):
+        for head in ("main", "topic"):
+            for fail_test in (False, True):
+                for hosted in (True, False):
+                    context = dict(base, **{"github.ref": ref, "github.ref_name": ref.rsplit("/", 1)[-1], "inputs.head": head, "inputs.fail_test": fail_test, "inputs.hosted": hosted})
+                    chosen = evaluate(expression, context)
+                    wanted = WRITE_ENVIRONMENT if (ref, head, fail_test, hosted) == ("refs/heads/main", "main", False, True) else READ_ENVIRONMENT
+                    if chosen != wanted:
+                        found.append(
+                            f"the attempt environment is {chosen!r} for ref {ref}, head {head}, fail_test {fail_test}, hosted {hosted}; wanted {wanted!r}"
+                        )
+    if run.get("permissions") != {"contents": "read", "id-token": "write"}:
+        found.append("the attempt run job must have exactly contents: read and id-token: write")
+    classify = docs[ATTEMPT]["jobs"]["classify"]
+    if "id-token" in classify.get("permissions", {}) or "environment" in classify:
+        found.append("the classify job must have neither id-token nor an environment")
+    lane = docs["sim-gate-lane.yml"]["jobs"]
+    for target in ("", "cloud", "onprem"):
+        for label in ("", "lab"):
+            context = {"needs.route.outputs.target": target, "inputs.lab_label": label}
+            runner = evaluate(lane["attempt"]["with"]["runner"], context)
+            if truthy(evaluate(lane["attempt"]["with"]["hosted"], context)) != (runner == "ubuntu-24.04"):
+                found.append(f"the hosted input disagrees with the runner for target {target!r} and label {label!r}")
+    if str(lane["retry"]["with"]["hosted"]) != "true" or str(lane["retry"]["with"]["runner"]) != "ubuntu-24.04":
+        found.append("the retry must be hosted")
+    for name, doc in docs.items():
+        for job_id, job in doc["jobs"].items():
+            if any(SECRET_REF.search(str(value)) for _, value in walk(job)) and "environment" not in job:
+                found.append(f"{name}: job {job_id} reads secrets without an environment, so they would be empty in a called workflow")
+    return found
+
+
 def cache_wiring_violations(docs):
     found = []
     steps = docs[ATTEMPT]["jobs"]["run"]["steps"]
     names = [st.get("name") for st in steps]
     for step in steps:
-        if TAILNET_KEY in str(step) and not (
-            str(step.get("uses", "")).startswith("tailscale/github-action@") and "if" in step and hosted_only(str(step["if"]))
+        tailscale = str(step.get("uses", "")).startswith("tailscale/github-action@")
+        if (tailscale or any(name in str(step) for name in TAILNET_INPUTS)) and not (
+            tailscale and "if" in step and hosted_only(str(step["if"]))
         ):
-            found.append("the tailnet auth key may be used only by the tailscale action on a github-hosted runner")
+            found.append("the tailnet credentials may be used only by the tailscale action on a github-hosted runner")
+        if tailscale:
+            inputs = step.get("with", {})
+            if inputs.get("tags") != "tag:ci-sim":
+                found.append("the tailscale action must join with tags: tag:ci-sim")
+            if "authkey" in inputs or "oauth-secret" in inputs:
+                found.append("the tailscale action must use workload identity, not a stored auth key or OAuth secret")
+            if not inputs.get("oauth-client-id") or not inputs.get("audience"):
+                found.append("the tailscale action needs oauth-client-id and audience for workload identity")
+            if "--accept-routes=false" not in str(inputs.get("args", "")):
+                found.append("the tailscale action must turn route acceptance off with --accept-routes=false")
+            if str(inputs.get("use-cache")) != "false":
+                found.append("the tailscale action must not use its binary cache")
         if WRITER_PREFIX in str(step):
             guard = step.get("if")
             if guard is None or not default_branch_only(str(guard)):
                 found.append("a step reading the cache writer key must itself be gated on the default branch")
-            elif truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "inputs.head": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": True})):
+            elif truthy(evaluate(condition(str(guard)), dict(SAVE_OK, **{"inputs.fail_test": True}))):
                 found.append("the cache save step must not run when fail_test is on")
-            elif not truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "inputs.head": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": False})):
+            elif not truthy(evaluate(condition(str(guard)), SAVE_OK)):
                 found.append("the cache save step never runs on the default branch with fail_test off")
             if step.get("env", {}).get("SIM_DEFAULT_BRANCH") != "${{ github.event.repository.default_branch }}":
                 found.append("the save step must pass the default branch name from github.event.repository.default_branch")
@@ -427,8 +509,12 @@ def violations(directory):
             found.append(f"{name}: workflow permissions must be contents: read only")
         for path, value in walk(doc):
             text = str(value)
-            if "permissions" in path and value not in ("read", "none"):
+            if "permissions" in path and value not in ("read", "none") and not (
+                value == "write" and path[-1] == "id-token" and (name, path[:-1]) in ID_TOKEN_PLACES
+            ):
                 found.append(f"{name}: permission {'.'.join(map(str, path))} is {value}")
+            if "github.ref_name" in text:
+                found.append(f"{name}: github.ref_name is refused at {'.'.join(map(str, path))}; a tag can carry the branch name, compare github.ref")
             if path[-1:] == ("continue-on-error",):
                 found.append(f"{name}: continue-on-error at {'.'.join(map(str, path))}")
             if path[-1:] == ("secrets",) and value == "inherit":
@@ -556,6 +642,5 @@ def violations(directory):
     for output in ("attempt_reason", "retry_reason"):
         if output not in docs["sim-gate-lane.yml"]["on"]["workflow_call"]["outputs"]:
             found.append(f"lane workflow does not output {output}")
-    if "environment" in attempt["run"]:
-        found.append("the attempt job must not use an environment")
+    found += environment_violations(docs)
     return found
