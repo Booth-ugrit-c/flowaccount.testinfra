@@ -1213,9 +1213,9 @@ EXPECTED_SCRIPTS = {
     "adapters/dotnet/build_artifact.sh",
     "adapters/dotnet/test_lane.sh",
 }
-PYTHON_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
+PYTHON_MODULE = re.compile(r"\bpython3?(?:\s+-[A-Za-z]+)*\s+-m\s+([A-Za-z_][\w.]*)")
 PYTHON_FILE = re.compile(r"\bpython3?\s+([^\s\-][^\s;|&)]*\.py)\b")
-SHELL_SCRIPT = re.compile(r"""(?:^|[\s;&|(])(?:sh|bash)\s+(?:-[A-Za-z]+\s+)*["']?([^\s"';|&)]+\.sh)\b""")
+SHELL_SCRIPT = re.compile(r"""(?:^|[\s;&|(])(?:sh|bash|\.)\s+(?:-[A-Za-z]+\s+)*["']?([^\s"';|&)]+\.sh)\b""")
 DIRECT_SCRIPT = re.compile(r"""(?:^|[\s;&|(])["']?(\./[^\s"';|&)]+\.sh)\b""")
 SCRIPT_PREFIXES = ("$GITHUB_WORKSPACE/", "${GITHUB_WORKSPACE}/", ".sim-trusted/", "./")
 

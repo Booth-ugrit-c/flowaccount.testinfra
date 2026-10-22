@@ -86,7 +86,20 @@ DOTNET_SETUP = ("Set up .NET",)
 
 
 def test_core_names_no_language_setup_step_as_infra():
-    assert classify.INFRA_STEPS == ("Set up job", "Hygiene", "Health", "Services")
+    assert classify.INFRA_STEPS == ("Set up job", "Checkout trusted", "Hygiene", "Health", "Services")
+
+
+def test_a_failed_trusted_checkout_before_hygiene_is_infra(tmp_path):
+    steps = [
+        {"name": "Set up job", "conclusion": "success"},
+        {"name": "Checkout", "conclusion": "success"},
+        {"name": "Checkout trusted", "conclusion": "failure"},
+        {"name": "Hygiene", "conclusion": "skipped"},
+        {"name": "Test", "conclusion": "skipped"},
+    ]
+    job = {"conclusion": "failure", "steps": steps}
+    assert classify.classify(set(), job, "", [], run_result="failure") == "infra"
+    assert classify.classify(set(), job, "", [], run_result="failure", infra_steps=("Set up job", "Hygiene")) == "test"
 
 
 def test_an_adapter_setup_failure_is_test_unless_the_adapter_names_it(tmp_path):

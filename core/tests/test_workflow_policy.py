@@ -1218,8 +1218,10 @@ def test_every_shipped_invocation_resolves_and_the_scan_sees_the_known_ones():
         (TOP, "    uses: ./.github/workflows/tpl-dotnet-build.yml", "    uses: ./.github/workflows/tpl-dotnet-builds.yml", "uses ./.github/workflows/tpl-dotnet-builds.yml, which does not exist"),
         (ROUTE, "python3 -m core.route", "python3 -c 'import core.route'", "no workflow runs python -m core.route"),
         (LANE, "python3 -m core.zero_tests", "python3 -c 'import core.zero_tests'", "no workflow runs python -m core.zero_tests"),
-        (LANE, "sh adapters/dotnet/test_lane.sh", ". adapters/dotnet/test_lane.sh", "no workflow runs adapters/dotnet/test_lane.sh"),
-        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: . core/resolve_refs.sh\n", "no workflow runs core/resolve_refs.sh"),
+        (LANE, "sh adapters/dotnet/test_lane.sh", "cat adapters/dotnet/test_lane.sh", "no workflow runs adapters/dotnet/test_lane.sh"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: cat core/resolve_refs.sh\n", "no workflow runs core/resolve_refs.sh"),
+        (ROUTE, "python3 -m core.route", "python3 -I -m core.nothere", "python -m core.nothere does not resolve"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: . core/nothere.sh\n", "core/nothere.sh does not resolve"),
     ],
 )
 def test_an_invocation_that_does_not_resolve_at_the_head_is_refused(copy, filename, old, new, expected):
