@@ -259,9 +259,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           JOB_SUFFIX: run ${{ inputs.tag }}
           ARTIFACT_NAME: markers-${{ inputs.tag }}
+          RUN_RESULT: ${{ needs.run.result }}
         run: |
           set -eu
-          verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --reason-file "$RUNNER_TEMP/reason.txt")
+          verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt")
           case "$verdict" in
               pass | test | infra) ;;
               *) verdict="test" ;;

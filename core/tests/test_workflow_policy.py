@@ -326,6 +326,18 @@ MUTATIONS = {
         "",
         "does not capture the infra reason",
     ),
+    "classify without the run job result": (
+        ATTEMPT,
+        ' --run-result "$RUN_RESULT"',
+        "",
+        "does not take the run job result from needs.run.result",
+    ),
+    "classify with the run job result from another source": (
+        ATTEMPT,
+        "          RUN_RESULT: ${{ needs.run.result }}",
+        "          RUN_RESULT: success",
+        "does not take the run job result from needs.run.result",
+    ),
     "gate without the unit reason": (
         TOP,
         '            --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" \\\n',
