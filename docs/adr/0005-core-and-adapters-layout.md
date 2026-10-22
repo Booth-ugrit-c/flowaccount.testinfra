@@ -14,7 +14,8 @@ Layout:
 - `core/` holds the language-neutral tools and their tests (`core/tests/`): route, classify, gate, the ref resolver, the pre-job hygiene, the runner kill and the runner-lost fingerprints.
 - `adapters/<stack>/` holds what a stack needs to plug in: affected selection, plan, cache, test runner and counts parser, each with its own tests.
 - Direction: adapters may import core; core imports nothing from `adapters` and nothing from the dotnet tools that have not moved yet.
-- `core` is a namespace package without `__init__.py`, as the adapter directories are; the layering test pins `core.__path__` to this repository so a package of the same name elsewhere on the path fails a test instead of being run.
+- `core` is a regular package (`core/__init__.py`) so a `core` package elsewhere on `sys.path` cannot shadow it for `python3 -m core.*`; the layering test pins `core.__path__` and `core.__file__` to this repository and runs a shadow-package check.
+- Classify takes the attempt's conclusion from `needs.run.result`, not from the jobs API, which can lag the workflow by minutes; the jobs API is read only on the failure path, for step conclusions and runner-loss annotations.
 
 Order:
 - This change moves the core tools only, with no change in behaviour. The dotnet selection, plan and cache tools stay in `tools/sim_gate` and move into `adapters/dotnet` in a following change, which also splits the generic object store out of the cache client into core.
