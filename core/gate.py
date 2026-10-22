@@ -5,7 +5,7 @@ import os
 import re
 import sys
 
-from tools.sim_gate.classify import TRIPWIRE_REASON
+from core.classify import TRIPWIRE_REASON
 
 PASS = "pass"
 RED_TEST = "red [test]"

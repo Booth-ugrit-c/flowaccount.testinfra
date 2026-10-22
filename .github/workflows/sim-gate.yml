@@ -54,7 +54,7 @@ jobs:
           BASE_REF: ${{ inputs.base }}
           HEAD_REF: ${{ inputs.head }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: sh tools/sim_gate/resolve_refs.sh
+        run: sh core/resolve_refs.sh
 
   unit:
     name: unit
@@ -120,7 +120,7 @@ jobs:
           INTEGRATION_ATTEMPT_REASON: ${{ needs.integration.outputs.attempt_reason }}
           INTEGRATION_RETRY_REASON: ${{ needs.integration.outputs.retry_reason }}
         run: |
-          python3 -m tools.sim_gate.gate \
+          python3 -m core.gate \
             --lane "unit=${UNIT_ATTEMPT},${UNIT_RETRY}" \
             --lane "integration=${INTEGRATION_ATTEMPT},${INTEGRATION_RETRY}" \
             --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" \

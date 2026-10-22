@@ -70,7 +70,7 @@ jobs:
           python-version: "3.12"
       - name: Hygiene
         if: ${{ runner.environment == 'self-hosted' }}
-        run: sh tools/sim_gate/prejob.sh
+        run: sh core/prejob.sh
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -192,7 +192,7 @@ jobs:
           set -u
           touch "$MARKERS/test-start"
           if [ "$KILL_RUNNER" = true ]; then
-              sh "$GITHUB_WORKSPACE/tools/sim_gate/kill_own_runner.sh" || exit 1
+              sh "$GITHUB_WORKSPACE/core/kill_own_runner.sh" || exit 1
               sleep 600
           fi
           status=0
@@ -261,7 +261,7 @@ jobs:
           ARTIFACT_NAME: markers-${{ inputs.tag }}
         run: |
           set -eu
-          verdict=$(python3 -m tools.sim_gate.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --reason-file "$RUNNER_TEMP/reason.txt")
+          verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --reason-file "$RUNNER_TEMP/reason.txt")
           case "$verdict" in
               pass | test | infra) ;;
               *) verdict="test" ;;

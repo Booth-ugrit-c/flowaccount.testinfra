@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from gh_server import FakeGitHub
-from tools.sim_gate import route
+from core import route
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "route.json").read_text())
 REPO = "owner/repo"
@@ -200,11 +200,11 @@ def run_cli(api, tmp_path, token=TOKEN, extra=None):
     env.update(make_env(api, SIM_ROUTE_TOKEN=token))
     env.update(extra or {})
     return subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.route", LABEL],
+        [sys.executable, "-m", "core.route", LABEL],
         capture_output=True,
         text=True,
         env=env,
-        cwd=Path(__file__).resolve().parents[3],
+        cwd=Path(__file__).resolve().parents[2],
         timeout=30,
     )
 
@@ -227,11 +227,11 @@ def test_cli_without_a_label_argument_is_cloud(api):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GITHUB_", "SIM_"))}
     env.update(make_env(api))
     out = subprocess.run(
-        [sys.executable, "-m", "tools.sim_gate.route"],
+        [sys.executable, "-m", "core.route"],
         capture_output=True,
         text=True,
         env=env,
-        cwd=Path(__file__).resolve().parents[3],
+        cwd=Path(__file__).resolve().parents[2],
         timeout=30,
     )
     assert out.stdout == "cloud\n"
