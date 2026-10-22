@@ -296,8 +296,8 @@ RUNNER = "${{ needs.route.outputs.target == 'onprem' && inputs.runner_label || '
 SOLUTION_GLOBAL_JSON = "${{ inputs.solution_root }}/global.json"
 CACHE_BUILD = "adapters/dotnet/cache_build.sh"
 FULL_SHA = "0123456789abcdef0123456789abcdef01234567"
-FAULTS = ("none", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice")
-SIM_FAULTS = ("", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice", "other")
+FAULTS = ("none", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice", "fail_unit_health_once")
+SIM_FAULTS = ("", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice", "fail_unit_health_once", "other")
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
 UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
@@ -325,6 +325,7 @@ PERMISSION_MAP = {
     (BUILD, "run"): {"contents": "read", "id-token": "write"},
     (BUILD, "classify"): CLASSIFY_PERMISSIONS,
     (LANE, "classify"): CLASSIFY_PERMISSIONS,
+    (ENTRY, "validate"): {"contents": "read", "actions": "read"},
     (ENTRY, "comment"): {"contents": "read", "actions": "read", "pull-requests": "write"},
     (ENTRY, "requeue"): {"contents": "read", "actions": "write"},
     (RETEST, "requeue"): {"contents": "read", "actions": "write"},
@@ -370,6 +371,7 @@ python3 --version
 (cd "$SIM_ROOT" && dotnet --version)
 touch "$RUNNER_TEMP/markers/health"
 """
+LANE_FAIL_HEALTH_ENV = "${{ inputs.sim_fault == 'fail_unit_health_once' && inputs.lane == 'unit' && inputs.retest != true }}"
 BUILD_PINS = {
     "Health": {"name": "Health", "env": {"FAIL_HEALTH": FAIL_HEALTH_ENV}, "run": HEALTH_RUN},
     TRIPWIRE_STEP: {"name": TRIPWIRE_STEP, "env": {"SIM_TAILNET_JOIN": "${{ steps.join.outcome }}", **READER_ENV}, "run": TRIPWIRE_RUN},
@@ -412,6 +414,7 @@ cat "$RUNNER_TEMP/zero.txt"
 awk '/^executed=[0-9]+ / { sub(/^executed=/, ""); n += $1 } END { printf "executed=%d\\n", n }' "$RUNNER_TEMP/zero.txt" >> "$GITHUB_OUTPUT"
 """
 LANE_PINS = {
+    "Health": {"name": "Health", "env": {"FAIL_HEALTH": LANE_FAIL_HEALTH_ENV}, "run": HEALTH_RUN},
     "Unpack": {"name": "Unpack", "run": UNPACK_RUN},
     "Test": {
         "name": "Test",
@@ -993,6 +996,13 @@ def fault_violations(docs):
             got = truthy(evaluate(str(health), {"inputs.sim_fault": fault, "inputs.retest": retest}))
             if got != (fault == "fail_health_twice" or fault == "fail_health_once" and not retest):
                 found.append(f"{BUILD}: the Health step fails={got} for fault {fault!r} with retest {retest}")
+    lane_health = step_named(docs, LANE, "Health").get("env", {}).get("FAIL_HEALTH", "")
+    for fault in SIM_FAULTS:
+        for lane in ("unit", "integration"):
+            for retest in (True, False):
+                got = truthy(evaluate(str(lane_health), {"inputs.sim_fault": fault, "inputs.lane": lane, "inputs.retest": retest}))
+                if got != (fault == "fail_unit_health_once" and lane == "unit" and not retest):
+                    found.append(f"{LANE}: the lane Health step fails={got} for fault {fault!r}, lane {lane} and retest {retest}")
     kill = step_named(docs, LANE, "Test").get("env", {}).get("KILL_RUNNER", "")
     for fault in SIM_FAULTS:
         for target in ("onprem", "cloud", ""):
@@ -1094,7 +1104,7 @@ def decide_run(lanes):
         lines += [
             f'case "${upper}_SELECTED" in',
             f'    true) set -- "$@" --lane "{lane}=${{{upper}_VERDICT}}" --reason "{lane}=${{{upper}_REASON}}" --executed "{lane}=${{{upper}_EXECUTED}}" ;;',
-            f'    false) echo "lane {lane}: not selected" >> "$GITHUB_STEP_SUMMARY" ;;',
+            f'    false) set -- "$@" --prior-lane "{lane}=${{{upper}_PRIOR}}" ;;',
             '    *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;',
             "esac",
         ]
@@ -1131,14 +1141,16 @@ def decide_env(lanes):
         env[f"{upper}_SELECTED"] = f"${{{{ needs.validate.outputs.lane_{lane} }}}}"
         for key in ("verdict", "reason", "executed"):
             env[f"{upper}_{key.upper()}"] = f"${{{{ needs.{lane}.outputs.{key} }}}}"
+        env[f"{upper}_PRIOR"] = f"${{{{ needs.validate.outputs.prior_{lane} }}}}"
     return env
 
 
+VERDICT_ARTIFACT = "sim-gate-verdict-${{ github.run_attempt }}"
 VERDICT_UPLOAD = {
     "name": "Upload verdict",
     "if": "${{ always() }}",
     "uses": UPLOAD,
-    "with": {"name": "sim-gate-verdict", "path": "${{ runner.temp }}/verdict/verdict.json", "if-no-files-found": "ignore", "retention-days": "1"},
+    "with": {"name": VERDICT_ARTIFACT, "path": "${{ runner.temp }}/verdict/verdict.json", "if-no-files-found": "ignore", "retention-days": "1"},
 }
 
 
@@ -1184,7 +1196,7 @@ COMMENT_JOB = {
     "steps": [
         {"name": "Checkout", "uses": CHECKOUT, "with": {"persist-credentials": "false"}},
         {"name": "Set up Python", "uses": SETUP_PYTHON, "with": {"python-version": "3.12"}},
-        {"name": "Download verdict", "uses": DOWNLOAD, "with": {"name": "sim-gate-verdict", "path": "${{ runner.temp }}/verdict"}},
+        {"name": "Download verdict", "uses": DOWNLOAD, "with": {"name": VERDICT_ARTIFACT, "path": "${{ runner.temp }}/verdict"}},
         {
             "name": "Upsert",
             "env": {
@@ -1250,6 +1262,26 @@ def report_violations(docs):
     return found
 
 
+PRIOR_CHECK = "Check the previous run"
+
+
+def prior_step(lanes):
+    env = {
+        "GITHUB_TOKEN": "${{ github.token }}",
+        "RETEST_OF": "${{ steps.resolve.outputs.retest_of }}",
+        "STACK": "${{ inputs.stack }}",
+        **{f"{lane.upper()}_SELECTED": f"${{{{ steps.resolve.outputs.lane_{lane} }}}}" for lane in lanes},
+    }
+    selected = " ".join(f'--selected "{lane}=${{{lane.upper()}_SELECTED}}"' for lane in lanes)
+    return {
+        "name": PRIOR_CHECK,
+        "id": "prior",
+        "if": "${{ steps.resolve.outputs.retest_of != '' }}",
+        "env": env,
+        "run": f'python3 -m core.prior check --run-id "$RETEST_OF" --workflow sim-gate.yml --stack "$STACK" {selected}',
+    }
+
+
 def validate_violations(docs):
     jobs = docs[ENTRY]["jobs"]
     validate = jobs["validate"]
@@ -1278,8 +1310,11 @@ def validate_violations(docs):
         found.append("validate must check out before it resolves")
     names = [*RESOLVED, *(f"lane_{lane}" for lane in known_lanes(docs))]
     outputs = {name: f"${{{{ steps.resolve.outputs.{name} }}}}" for name in names}
+    outputs.update({f"prior_{lane}": f"${{{{ steps.prior.outputs.prior_{lane} }}}}" for lane in known_lanes(docs)})
     if validate.get("outputs") != outputs:
-        found.append(f"validate must output {', '.join(names)} from the resolve step")
+        found.append(f"validate must output {', '.join(names)} from the resolve step and the prior lanes from the prior check")
+    if [st.get("name") for st in steps] != ["Checkout", "Resolve refs", "Set up Python", PRIOR_CHECK] or steps[-1] != prior_step(known_lanes(docs)):
+        found.append(f"validate must be Checkout, Resolve refs, Set up Python, then the pinned {PRIOR_CHECK} step, only on a retest")
     for job_id in ("build", *lane_jobs_of(docs)):
         given = jobs.get(job_id, {}).get("with", {})
         for key, wanted in CALLER_WITH.items():
@@ -1314,7 +1349,7 @@ WRITER_TEXT = re.compile(r"sim[-_]cache[-_]write", re.I)
 YAML_ESCAPE = re.compile(r"\\[xuUN]")
 SECRETS_WHOLE = re.compile(r"toJSON\s*\(\s*secrets\s*\)|\bsecrets\s*\[", re.I)
 THIRD_PARTY_MODULES = {"pytest", "pip"}
-EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "core.zero_tests", "core.comment", "core.retest_sim", "adapters.dotnet.affected", "adapters.dotnet.plan"}
+EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "core.zero_tests", "core.comment", "core.retest_sim", "core.prior", "adapters.dotnet.affected", "adapters.dotnet.plan"}
 EXPECTED_SCRIPTS = {
     "core/resolve_refs.sh",
     "core/prejob.sh",

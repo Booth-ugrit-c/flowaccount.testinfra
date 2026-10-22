@@ -9,7 +9,7 @@ import urllib.error
 from urllib.parse import quote
 
 from core.classify import TRIPWIRE_REASON
-from core.comment import BRANCH, GATE_RUNNING, RUN_ID, SHA, Refused, call, call_json, fetch_state, gate_agrees, gate_conclusion, text
+from core.comment import ATTEMPT, BRANCH, GATE_RUNNING, RUN_ID, SHA, Refused, call, call_json, number, read_run, text, verified_state
 from core.gate import BUILD
 from core.route import REPOSITORY, api_base
 
@@ -26,19 +26,17 @@ class NoDispatch(Exception):
 def wait_for_run(base, repository, token, run_id, wait, poll, sleep, clock):
     deadline = clock() + wait
     while True:
-        run = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}", token)
-        if not isinstance(run, dict):
-            raise Refused("run")
+        run = read_run(base, repository, token, run_id)
         if run.get("status") == "completed" or clock() >= deadline:
             return run
         sleep(poll)
 
 
-def wait_for_gate(base, repository, token, run_id, wait, poll, sleep, clock):
+def wait_for_verdict(base, repository, token, run_id, attempt, wait, poll, sleep, clock):
     deadline = clock() + wait
     while True:
         try:
-            return gate_conclusion(base, repository, token, run_id)
+            return verified_state(base, repository, token, run_id, attempt)
         except Refused as exc:
             if str(exc) != GATE_RUNNING:
                 raise
@@ -59,6 +57,7 @@ def check_run(run, run_id, workflow):
         raise NoDispatch(f"run conclusion is {run.get('conclusion')!r:.40}")
     text(run.get("head_sha"), SHA, "head_sha")
     text(run.get("created_at"), TIMESTAMP, "created_at")
+    number(run.get("run_attempt"), ATTEMPT, "run attempt")
     return text(run.get("head_branch"), BRANCH, "head_branch")
 
 
@@ -103,10 +102,7 @@ def run(env, run_id, workflow, wait, poll, sleep=time.sleep, clock=time.monotoni
         raise Refused("environment")
     gate_run = wait_for_run(base, repository, token, run_id, wait, poll, sleep, clock)
     branch = check_run(gate_run, run_id, workflow)
-    state = fetch_state(base, repository, token, run_id)
-    if state["run_id"] != run_id:
-        raise Refused("verdict run id")
-    gate_agrees(state, wait_for_gate(base, repository, token, run_id, wait, poll, sleep, clock))
+    state = wait_for_verdict(base, repository, token, run_id, gate_run["run_attempt"], wait, poll, sleep, clock)
     lanes = [lane for lane in retest_lanes(state) if lane != BUILD]
     if not lanes:
         raise NoDispatch("no test lane to retest")
@@ -151,7 +147,7 @@ def main(argv):
         print(f"retest_sim: no dispatch: {exc}")
     except Exception as exc:
         code = f" {exc.code}" if isinstance(exc, urllib.error.HTTPError) else ""
-        print(f"retest_sim: no dispatch: {type(exc).__name__}{code}")
+        print(f"::warning::retest_sim: no dispatch after an API error: {type(exc).__name__}{code}")
     return 0
 
 

@@ -62,6 +62,7 @@ on:
           - kill_both
           - fail_health_once
           - fail_health_twice
+          - fail_unit_health_once
       retest_of:
         description: Run id this run retests, or empty
         required: false
@@ -76,6 +77,9 @@ jobs:
     name: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       pr_sha: ${{ steps.resolve.outputs.pr_sha }}
       base_sha: ${{ steps.resolve.outputs.base_sha }}
@@ -86,6 +90,8 @@ jobs:
       retest_of: ${{ steps.resolve.outputs.retest_of }}
       lane_unit: ${{ steps.resolve.outputs.lane_unit }}
       lane_integration: ${{ steps.resolve.outputs.lane_integration }}
+      prior_unit: ${{ steps.prior.outputs.prior_unit }}
+      prior_integration: ${{ steps.prior.outputs.prior_integration }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,6 +111,20 @@ jobs:
           KNOWN_LANES: unit integration
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: sh core/resolve_refs.sh
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Check the previous run
+        id: prior
+        if: ${{ steps.resolve.outputs.retest_of != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RETEST_OF: ${{ steps.resolve.outputs.retest_of }}
+          STACK: ${{ inputs.stack }}
+          UNIT_SELECTED: ${{ steps.resolve.outputs.lane_unit }}
+          INTEGRATION_SELECTED: ${{ steps.resolve.outputs.lane_integration }}
+        run: python3 -m core.prior check --run-id "$RETEST_OF" --workflow sim-gate.yml --stack "$STACK" --selected "unit=${UNIT_SELECTED}" --selected "integration=${INTEGRATION_SELECTED}"
 
   build:
     name: build
@@ -219,21 +239,23 @@ jobs:
           UNIT_VERDICT: ${{ needs.unit.outputs.verdict }}
           UNIT_REASON: ${{ needs.unit.outputs.reason }}
           UNIT_EXECUTED: ${{ needs.unit.outputs.executed }}
+          UNIT_PRIOR: ${{ needs.validate.outputs.prior_unit }}
           INTEGRATION_SELECTED: ${{ needs.validate.outputs.lane_integration }}
           INTEGRATION_VERDICT: ${{ needs.integration.outputs.verdict }}
           INTEGRATION_REASON: ${{ needs.integration.outputs.reason }}
           INTEGRATION_EXECUTED: ${{ needs.integration.outputs.executed }}
+          INTEGRATION_PRIOR: ${{ needs.validate.outputs.prior_integration }}
         run: |
           set -eu
           set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"
           case "$UNIT_SELECTED" in
               true) set -- "$@" --lane "unit=${UNIT_VERDICT}" --reason "unit=${UNIT_REASON}" --executed "unit=${UNIT_EXECUTED}" ;;
-              false) echo "lane unit: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+              false) set -- "$@" --prior-lane "unit=${UNIT_PRIOR}" ;;
               *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
           esac
           case "$INTEGRATION_SELECTED" in
               true) set -- "$@" --lane "integration=${INTEGRATION_VERDICT}" --reason "integration=${INTEGRATION_REASON}" --executed "integration=${INTEGRATION_EXECUTED}" ;;
-              false) echo "lane integration: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+              false) set -- "$@" --prior-lane "integration=${INTEGRATION_PRIOR}" ;;
               *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
           esac
           case "$RETEST" in
@@ -248,7 +270,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sim-gate-verdict
+          name: sim-gate-verdict-${{ github.run_attempt }}
           path: ${{ runner.temp }}/verdict/verdict.json
           if-no-files-found: ignore
           retention-days: 1
@@ -277,7 +299,7 @@ jobs:
       - name: Download verdict
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: sim-gate-verdict
+          name: sim-gate-verdict-${{ github.run_attempt }}
           path: ${{ runner.temp }}/verdict
       - name: Upsert
         env:

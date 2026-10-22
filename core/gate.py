@@ -110,6 +110,11 @@ def overall(lanes, reasons=None, retest=False):
     return RED_TEST if worst == NOT_RUN else worst
 
 
+def with_prior(verdict, prior, retest_of):
+    labels = [verdict] + [PASS if given == PASS and retest_of else RED_TEST for given in prior.values()]
+    return max(labels, key=severity)
+
+
 def retest_lanes(lanes, reasons=None):
     if TRIPWIRE_REASON in (reasons or {}).values():
         return []
@@ -121,12 +126,14 @@ def retest_lanes(lanes, reasons=None):
     return [name for name, verdict in judged if verdict == "infra" or (upstream and verdict == "none")]
 
 
-def summary(lanes, verdict, reasons=None, executed=None, retest=False):
+def summary(lanes, verdict, reasons=None, executed=None, retest=False, prior=None):
     reasons, executed = reasons or {}, executed or {}
     rows = []
     for name, judged in verdicts(lanes):
         count = executed.get(name)
         rows.append(f"| {name} | {judged} | {'-' if count is None else count} | {lane_label(judged, reasons.get(name, ''), retest)} |")
+    for name, given in (prior or {}).items():
+        rows.append(f"| {name} | previous run: {given or 'none'} | - | {PASS if given == PASS else RED_TEST} |")
     header = ["## sim-gate", "", f"Result: **{verdict}**", "", "| lane | verdict | executed | lane result |", "|---|---|---|---|"]
     return "\n".join(header + rows) + "\n"
 
@@ -186,6 +193,7 @@ def main(argv):
     parser.add_argument("--reason", action="append", default=[], type=parse_reason)
     parser.add_argument("--executed", action="append", default=[], type=parse_executed)
     parser.add_argument("--input", action="append", default=[], type=parse_input)
+    parser.add_argument("--prior-lane", action="append", default=[], type=parse_lane)
     parser.add_argument("--retest", action="store_true")
     parser.add_argument("--retest-of", default="")
     parser.add_argument("--stack", default="")
@@ -198,12 +206,15 @@ def main(argv):
         reasons = unique(args.reason, "reason")
         executed = unique(args.executed, "executed count")
         inputs = unique(args.input, "input")
+        prior = unique(args.prior_lane, "prior lane")
     except ValueError as exc:
         parser.error(str(exc))
     names = {name for name, _ in args.lane}
     if not set(reasons) <= names or not set(executed) <= names:
         parser.error("a reason or executed count names a lane that was not given")
-    verdict = overall(args.lane, reasons, args.retest)
+    if BUILD in prior or set(prior) & names:
+        parser.error("a prior lane may not be build or a lane this run gave")
+    verdict = with_prior(overall(args.lane, reasons, args.retest), prior, args.retest_of)
     if args.verdict_file:
         try:
             data = state(args.lane, reasons, executed, args.retest, verdict, args.stack, args.retest_of, inputs, os.environ)
@@ -213,7 +224,7 @@ def main(argv):
             return 1
         Path(args.verdict_file).parent.mkdir(parents=True, exist_ok=True)
         Path(args.verdict_file).write_bytes(data)
-    append("GITHUB_STEP_SUMMARY", summary(args.lane, verdict, reasons, executed, args.retest))
+    append("GITHUB_STEP_SUMMARY", summary(args.lane, verdict, reasons, executed, args.retest, prior))
     append("GITHUB_OUTPUT", f"retest_lanes={','.join(retest_lanes(args.lane, reasons))}\n")
     print(f"gate: {verdict}")
     return 0 if verdict == PASS else 1

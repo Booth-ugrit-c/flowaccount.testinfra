@@ -9,12 +9,18 @@ import sys
 import urllib.error
 import urllib.request
 import zipfile
+from datetime import datetime, timedelta
 
 from core.route import MAX_BODY_BYTES, REPOSITORY, TIMEOUT_SECONDS, NoRedirect, allowed_url, api_base
 
 BOT_TYPE = "Bot"
 BOT_LOGIN = "github-actions[bot]"
-ARTIFACT = "sim-gate-verdict"
+ARTIFACT_PREFIX = "sim-gate-verdict-"
+UPLOAD_STEP = "Upload verdict"
+TIMESTAMP = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})"
+UNVERIFIED = "red [test]"
+CLOCK_SLACK = timedelta(seconds=1)
+PRIOR_ATTEMPT = 1
 STATE_FILE = "verdict.json"
 MAX_COMMENT_CHARS = 65000
 MAX_STATE_BYTES = 65536
@@ -151,12 +157,30 @@ def download(url, limit):
     return data
 
 
-def fetch_state(base, repository, token, run_id):
+def artifact_name(attempt):
+    return f"{ARTIFACT_PREFIX}{number(attempt, ATTEMPT, 'run attempt')}"
+
+
+def instant(value, name):
+    return datetime.fromisoformat(text(value, TIMESTAMP, name))
+
+
+def read_run(base, repository, token, run_id):
     text(run_id, RUN_ID, "run id")
-    listing = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100&name={ARTIFACT}", token)
-    live = [a for a in listing["artifacts"] if isinstance(a, dict) and a.get("name") == ARTIFACT and a.get("expired") is False]
+    run = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}", token)
+    if not isinstance(run, dict) or run.get("id") != int(run_id):
+        raise Refused("run")
+    return run
+
+
+def fetch_state(base, repository, token, run_id, attempt):
+    text(run_id, RUN_ID, "run id")
+    name = artifact_name(attempt)
+    listing = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100&name={name}", token)
+    live = [a for a in listing["artifacts"] if isinstance(a, dict) and a.get("name") == name and a.get("expired") is False]
     if len(live) != 1:
         raise Refused("artifact count")
+    created = instant(live[0].get("created_at"), "artifact created_at")
     artifact_id = number(live[0].get("id"), RUN_ID, "artifact id")
     size = live[0].get("size_in_bytes")
     if type(size) is not int or not 0 < size <= MAX_ZIP_BYTES:
@@ -171,12 +195,13 @@ def fetch_state(base, repository, token, run_id):
             raise Refused("artifact location") from None
         archive = download(location, MAX_ZIP_BYTES)
     with zipfile.ZipFile(io.BytesIO(archive)) as bundle, bundle.open(STATE_FILE) as member:
-        return parse_state(member.read(MAX_STATE_BYTES + 1))
+        return parse_state(member.read(MAX_STATE_BYTES + 1)), created
 
 
-def gate_conclusion(base, repository, token, run_id):
+def gate_job(base, repository, token, run_id, attempt):
     text(run_id, RUN_ID, "run id")
-    listing = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100", token)
+    number(attempt, ATTEMPT, "run attempt")
+    listing = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", token)
     jobs = listing.get("jobs") if isinstance(listing, dict) else None
     if not isinstance(jobs, list) or listing.get("total_count") != len(jobs):
         raise Refused("jobs listing")
@@ -185,7 +210,24 @@ def gate_conclusion(base, repository, token, run_id):
         raise Refused("gate job missing")
     if gates[0].get("status") != "completed":
         raise Refused(GATE_RUNNING)
-    return gates[0].get("conclusion")
+    return gates[0]
+
+
+def verified_state(base, repository, token, run_id, attempt):
+    job = gate_job(base, repository, token, run_id, attempt)
+    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+    uploads = [step for step in steps if isinstance(step, dict) and step.get("name") == UPLOAD_STEP]
+    if len(uploads) != 1 or uploads[0].get("conclusion") != "success":
+        raise Refused("upload step")
+    started = instant(uploads[0].get("started_at"), "upload started_at")
+    completed = instant(uploads[0].get("completed_at"), "upload completed_at")
+    state, created = fetch_state(base, repository, token, run_id, attempt)
+    if not started.replace(microsecond=0) <= created <= completed.replace(microsecond=0) + CLOCK_SLACK:
+        raise Refused("artifact time")
+    if state["run_id"] != run_id or state["run_attempt"] != attempt:
+        raise Refused("verdict run")
+    gate_agrees(state, job.get("conclusion"))
+    return state
 
 
 def gate_agrees(state, conclusion):
@@ -220,11 +262,21 @@ def cap(body, limit=MAX_COMMENT_CHARS):
     return body[: limit - len(TRUNCATED)] + TRUNCATED
 
 
+def headline(state, rows, prior):
+    if not state["retest_of"] or state["result"] != "pass":
+        return state["result"]
+    if prior is None or any(lane["verdict"] != "pass" for lane, _ in rows):
+        return UNVERIFIED
+    return state["result"]
+
+
 def render(marker, state, run_url, prior=None, prior_url="", note=""):
     title = f"### sim-gate {state['stack']}" + (" (Retest)" if state["retest"] else "")
-    lines = [f"<!-- {marker} -->", title, "", f"Result: **{cell(state['result'])}**", ""]
+    rows = merged_rows(state, run_url, prior, prior_url)
+    lines = [f"<!-- {marker} -->", title, "", f"Result: **{cell(headline(state, rows, prior))}**", ""]
+    lines += [f"Commit: `{state['inputs']['pr_sha']}`", ""]
     lines += ["| Lane | Verdict | Executed | Reason | Run |", "|---|---|---|---|---|"]
-    lines += [row(lane, source) for lane, source in merged_rows(state, run_url, prior, prior_url)]
+    lines += [row(lane, source) for lane, source in rows]
     if note:
         lines += ["", note]
     lines += ["", f"[Run log]({run_url})"]
@@ -253,18 +305,13 @@ def own_comment_id(base, repository, token, pr, header):
 
 def prior_state(base, repository, token, state):
     try:
-        prior = fetch_state(base, repository, token, state["retest_of"])
-        conclusion = gate_conclusion(base, repository, token, state["retest_of"])
+        prior = verified_state(base, repository, token, state["retest_of"], PRIOR_ATTEMPT)
     except Exception as exc:
-        print(f"comment: previous run unreadable: {type(exc).__name__}", file=sys.stderr)
-        return None, "Rows of the previous run could not be read."
-    same = prior["run_id"] == state["retest_of"] and prior["stack"] == state["stack"]
-    if not same or prior["inputs"]["pr_sha"] != state["inputs"]["pr_sha"]:
-        return None, "Rows of the previous run are not shown: it tested a different commit or stack."
-    try:
-        gate_agrees(prior, conclusion)
-    except Refused:
-        return None, "Rows of the previous run are not shown: its verdict disagrees with its gate job."
+        detail = f" {exc}" if isinstance(exc, Refused) else ""
+        print(f"comment: previous run unverified: {type(exc).__name__}{detail}", file=sys.stderr)
+        return None, "The previous run could not be verified, so the result is red."
+    if prior["stack"] != state["stack"] or prior["inputs"]["pr_sha"] != state["inputs"]["pr_sha"]:
+        return None, "The previous run tested a different commit or stack, so the result is red."
     return prior, ""
 
 

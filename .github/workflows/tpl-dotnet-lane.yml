@@ -149,10 +149,16 @@ jobs:
         with:
           global-json-file: ${{ inputs.solution_root }}/global.json
       - name: Health
+        env:
+          FAIL_HEALTH: ${{ inputs.sim_fault == 'fail_unit_health_once' && inputs.lane == 'unit' && inputs.retest != true }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/markers"
           echo "MARKERS=$RUNNER_TEMP/markers" >> "$GITHUB_ENV"
+          if [ "$FAIL_HEALTH" = true ]; then
+              echo "::error::injected health failure"
+              exit 1
+          fi
           python3 --version
           (cd "$SIM_ROOT" && dotnet --version)
           touch "$RUNNER_TEMP/markers/health"

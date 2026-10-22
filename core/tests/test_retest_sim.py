@@ -23,6 +23,7 @@ TOKEN = "tok-SENTINEL-9d2e"
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 DISPATCH = f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches"
+ARTIFACT_CREATED = "2026-01-02T03:10:05Z"
 
 
 def zipped(document):
@@ -95,13 +96,13 @@ class FakeGitHub:
             if match.group(1) not in self.tips:
                 return 404, b"{}", {}
             return 200, json.dumps({"name": match.group(1), "commit": {"sha": self.tips[match.group(1)]}}).encode(), {}
-        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)", path):
+        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)(?:/attempts/1)?", path):
             sequence = self.runs.get(match.group(1))
             if not sequence:
                 return 404, b"{}", {}
             current = sequence.pop(0) if len(sequence) > 1 else sequence[0]
             return 200, json.dumps(current).encode(), {}
-        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/jobs", path):
+        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/attempts/\d+/jobs", path):
             sequence = self.jobs.get(match.group(1))
             if not sequence:
                 return 404, b"{}", {}
@@ -115,7 +116,7 @@ class FakeGitHub:
                 listed = self.listings[run_id]
             elif run_id in self.artifacts:
                 size = len(self.artifacts[run_id])
-                listed = [{"id": int(run_id) + 5000, "name": "sim-gate-verdict", "expired": False, "size_in_bytes": size}]
+                listed = [live_artifact(size, int(run_id) + 5000)]
             return 200, json.dumps({"total_count": len(listed), "artifacts": listed}).encode(), {}
         if match := re.fullmatch(rf"/repos/{REPO}/actions/artifacts/(\d+)/zip", path):
             return 302, b"", {"Location": f"{self.url}/blob/{int(match.group(1)) - 5000}"}
@@ -159,8 +160,13 @@ def make_state(**changes):
     return state
 
 
-def gate_jobs(conclusion="failure", status="completed"):
-    return [{"name": "validate", "status": "completed", "conclusion": "success"}, {"name": "gate", "status": status, "conclusion": conclusion}]
+def upload_step(conclusion="success", started_at="2026-01-02T03:10:04Z", completed_at="2026-01-02T03:10:06Z"):
+    return {"name": "Upload verdict", "conclusion": conclusion, "started_at": started_at, "completed_at": completed_at}
+
+
+def gate_jobs(conclusion="failure", status="completed", steps=None):
+    steps = [{"name": "Decide", "conclusion": "failure"}, upload_step()] if steps is None else steps
+    return [{"name": "validate", "status": "completed", "conclusion": "success"}, {"name": "gate", "status": status, "conclusion": conclusion, "steps": steps}]
 
 
 def make_run(**changes):
@@ -173,6 +179,7 @@ def make_run(**changes):
         "head_branch": "feature-a",
         "head_sha": SHA_A,
         "created_at": "2026-01-02T03:04:05Z",
+        "run_attempt": 1,
     }
     run.update(changes)
     return run
@@ -245,14 +252,15 @@ def test_a_dispatch_error_is_reported_once_and_never_retried(github, capsys):
     github.fail[("POST", DISPATCH)] = 500
     out = run_tool(capsys)
     assert len(github.dispatches()) == 1
-    assert out.strip() == "retest_sim: no dispatch: HTTPError 500"
+    assert out.strip() == "::warning::retest_sim: no dispatch after an API error: HTTPError 500"
 
 
 def no_dispatch(github, capsys, reason):
     out = run_tool(capsys)
     assert github.dispatches() == []
-    assert out.startswith("retest_sim: no dispatch: ")
+    assert out.startswith(("retest_sim: no dispatch: ", "::warning::retest_sim: no dispatch after an API error: "))
     assert reason in out
+    return out
 
 
 def test_never_dispatches_when_the_gate_job_passed_but_the_verdict_says_infra(github, capsys):
@@ -310,8 +318,50 @@ def test_never_dispatches_when_retest_of_is_set(github, capsys):
 
 
 def test_never_dispatches_for_an_in_place_rerun(github, capsys):
+    github.runs["100"] = [make_run(run_attempt=2)]
     github.artifacts["100"] = zipped(make_state(retest=True, run_attempt=2, result="red [infra failed 2x]"))
+    github.listings["100"] = [live_artifact(len(github.artifacts["100"]), 5100, name="sim-gate-verdict-2")]
     no_dispatch(github, capsys, "already a retest")
+    assert any("/actions/runs/100/attempts/2/jobs" in p for _, p, _, _ in github.requests)
+
+
+@pytest.mark.parametrize(
+    "steps, reason",
+    [
+        ([upload_step("failure")], "upload step"),
+        ([], "upload step"),
+        ([upload_step(), upload_step()], "upload step"),
+        ([upload_step(started_at="2026-01-02T03:10:06Z", completed_at="2026-01-02T03:10:08Z")], "artifact time"),
+        ([upload_step(started_at="2026-01-02T03:09:00Z", completed_at="2026-01-02T03:10:03Z")], "artifact time"),
+        ([upload_step(started_at="not-a-time")], "upload started_at"),
+    ],
+)
+def test_never_dispatches_on_a_verdict_not_uploaded_by_the_gate_step(github, capsys, steps, reason):
+    github.jobs["100"] = [gate_jobs(steps=steps)]
+    no_dispatch(github, capsys, reason)
+
+
+@pytest.mark.parametrize(
+    "started_at, completed_at",
+    [("2026-01-02T03:10:05Z", "2026-01-02T03:10:05Z"), ("2026-01-02T03:10:03Z", "2026-01-02T03:10:04Z"), ("2026-01-02T03:10:05.400Z", "2026-01-02T03:10:06.000Z")],
+)
+def test_an_artifact_at_the_edge_of_the_upload_step_is_accepted(github, capsys, started_at, completed_at):
+    github.jobs["100"] = [gate_jobs(steps=[upload_step(started_at=started_at, completed_at=completed_at)])]
+    run_tool(capsys)
+    assert len(github.dispatches()) == 1
+
+
+def test_a_verdict_of_another_attempt_is_refused(github, capsys):
+    github.artifacts["100"] = zipped(make_state(run_attempt=2, retest=True, result="red [infra failed 2x]"))
+    no_dispatch(github, capsys, "verdict run")
+
+
+def test_a_policy_refusal_is_no_warning_but_an_api_error_is(github, capsys):
+    github.artifacts["100"] = zipped(make_state(result="red [test]", lanes=[lane("build", "pass"), lane("unit", "test")], retest_lanes=[]))
+    assert "::warning::" not in no_dispatch(github, capsys, "a lane failed with test")
+    github.fail[("GET", f"/repos/{REPO}/branches/feature-a")] = 500
+    github.artifacts["100"] = zipped(make_state())
+    assert no_dispatch(github, capsys, "HTTPError 500").startswith("::warning::")
 
 
 def test_never_dispatches_without_an_infra_lane(github, capsys):
@@ -408,7 +458,7 @@ def test_a_retest_of_another_run_does_not_block(github, capsys):
         ({"conclusion": "cancelled"}, "conclusion is 'cancelled'"),
         ({"head_branch": "-x"}, "head_branch"),
         ({"head_branch": "a..b"}, "head_branch"),
-        ({"id": 101}, "run id"),
+        ({"id": 101}, "run"),
     ],
 )
 def test_never_dispatches_for_an_unexpected_run(github, capsys, changes, reason):
@@ -424,7 +474,7 @@ def test_a_run_path_with_a_ref_suffix_is_accepted(github, capsys):
 
 def test_never_dispatches_when_the_verdict_names_another_run(github, capsys):
     github.artifacts["100"] = zipped(make_state(run_id="99"))
-    no_dispatch(github, capsys, "verdict run id")
+    no_dispatch(github, capsys, "verdict run")
 
 
 BAD_FIELDS = [
@@ -476,8 +526,8 @@ def test_an_artifact_location_off_the_allowed_schemes_is_refused(github, capsys,
     no_dispatch(github, capsys, "artifact location")
 
 
-def live_artifact(size, artifact_id=5100):
-    return {"id": artifact_id, "name": "sim-gate-verdict", "expired": False, "size_in_bytes": size}
+def live_artifact(size, artifact_id=5100, created_at=ARTIFACT_CREATED, name="sim-gate-verdict-1"):
+    return {"id": artifact_id, "name": name, "expired": False, "size_in_bytes": size, "created_at": created_at}
 
 
 def test_more_than_one_verdict_artifact_is_refused(github, capsys):

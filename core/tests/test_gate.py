@@ -226,6 +226,33 @@ def test_cli_exit_code_follows_the_verdict(tmp_path, args, code, line):
     assert line.removeprefix("gate: ") in (tmp_path / "summary.md").read_text()
 
 
+RETEST_ARGS = ["--lane", "build=pass", "--lane", "unit=pass", "--retest", "--retest-of", "5"]
+
+
+@pytest.mark.parametrize(
+    "args, code, line",
+    [
+        (RETEST_ARGS + ["--prior-lane", "integration=pass"], 0, "gate: pass"),
+        (RETEST_ARGS + ["--prior-lane", "integration=test"], 1, "gate: red [test]"),
+        (RETEST_ARGS + ["--prior-lane", "integration=infra"], 1, "gate: red [test]"),
+        (RETEST_ARGS + ["--prior-lane", "integration="], 1, "gate: red [test]"),
+        (["--lane", "build=pass", "--lane", "unit=pass", "--prior-lane", "integration=pass"], 1, "gate: red [test]"),
+        (["--lane", "build=pass", "--lane", "unit=infra", "--retest", "--retest-of", "5", "--prior-lane", "integration=pass"], 1, "gate: red [infra failed 2x]"),
+    ],
+)
+def test_lanes_not_rerun_count_only_when_the_previous_run_passed_them(tmp_path, args, code, line):
+    out = run_cli(args, tmp_path)
+    assert (out.returncode, out.stdout.strip()) == (code, line)
+    assert "| integration | previous run: " in (tmp_path / "summary.md").read_text()
+
+
+@pytest.mark.parametrize("extra", [["--prior-lane", "build=pass"], ["--prior-lane", "unit=pass"], ["--prior-lane", "integration=pass", "--prior-lane", "integration=pass"]])
+def test_a_prior_lane_may_not_be_build_a_rerun_lane_or_given_twice(tmp_path, extra):
+    out = run_cli(RETEST_ARGS + extra, tmp_path)
+    assert out.returncode == 2
+    assert "gate: pass" not in out.stdout
+
+
 def test_cli_writes_retest_lanes_to_the_step_output(tmp_path):
     run_cli(["--lane", "build=infra", "--lane", "unit=", "--lane", "integration="], tmp_path)
     assert (tmp_path / "output.txt").read_text() == "retest_lanes=build,unit,integration\n"

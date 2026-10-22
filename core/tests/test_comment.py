@@ -104,7 +104,7 @@ class FakeGitHub:
                     item["body"] = payload["body"]
                     return 200, json.dumps(item).encode(), {}
             return 404, b"{}", {}
-        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/jobs", path):
+        if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)/attempts/1/jobs", path):
             if match.group(1) not in self.jobs:
                 return 404, b"{}", {}
             jobs = self.jobs[match.group(1)]
@@ -114,7 +114,7 @@ class FakeGitHub:
             listed = []
             if run_id in self.artifacts:
                 size = len(self.artifacts[run_id])
-                listed = [{"id": int(run_id) + 5000, "name": "sim-gate-verdict", "expired": False, "size_in_bytes": size}]
+                listed = [{"id": int(run_id) + 5000, "name": "sim-gate-verdict-1", "expired": False, "size_in_bytes": size, "created_at": "2026-01-02T03:10:05Z"}]
             return 200, json.dumps({"total_count": len(listed), "artifacts": listed}).encode(), {}
         if match := re.fullmatch(rf"/repos/{REPO}/actions/artifacts/(\d+)/zip", path):
             return 302, b"", {"Location": f"{self.url}/blob/{int(match.group(1)) - 5000}"}
@@ -169,8 +169,11 @@ def gate_result(state):
     return "success" if state["result"] == "pass" else "failure"
 
 
-def gate_jobs(conclusion):
-    return [{"name": "validate", "status": "completed", "conclusion": "success"}, {"name": "gate", "status": "completed", "conclusion": conclusion}]
+UPLOAD = {"name": "Upload verdict", "conclusion": "success", "started_at": "2026-01-02T03:10:04Z", "completed_at": "2026-01-02T03:10:06Z"}
+
+
+def gate_jobs(conclusion, steps=(UPLOAD,)):
+    return [{"name": "validate", "status": "completed", "conclusion": "success"}, {"name": "gate", "status": "completed", "conclusion": conclusion, "steps": list(steps)}]
 
 
 def upsert(tmp_path, state, marker=MARKER, run_url=RUN_URL, pr="7", gate=None):
@@ -200,6 +203,57 @@ def test_first_upsert_posts_and_second_patches_the_same_comment(github, tmp_path
     marked = [c for c in github.comments if c["body"].startswith(HEADER)]
     assert len(marked) == 1
     assert "red [test]" in marked[0]["body"]
+
+
+def test_a_bot_comment_with_the_marker_in_the_middle_is_never_edited(github, tmp_path):
+    github.comments.append({"id": 5, "body": "quoted\n" + HEADER + "\nold", "user": dict(BOT)})
+    assert upsert(tmp_path, make_state()) == 0
+    assert github.comments[0]["body"] == "quoted\n" + HEADER + "\nold"
+    assert github.methods(f"/repos/{REPO}/issues") == ["POST"]
+
+
+def test_the_body_names_the_tested_commit(github, tmp_path):
+    assert upsert(tmp_path, make_state()) == 0
+    assert f"Commit: `{SHA_A}`" in github.comments[0]["body"].splitlines()
+
+
+def merged_body(github, tmp_path, prior_lanes, retest_lanes_run, steps=(UPLOAD,)):
+    prior = make_state(run_id="100", result="red [infra failed 1x]", retest_lanes=["unit"], lanes=prior_lanes)
+    github.artifacts["100"] = zipped(prior)
+    github.jobs["100"] = gate_jobs("failure", steps)
+    assert upsert(tmp_path, make_state(retest=True, retest_of="100", lanes=retest_lanes_run)) == 0
+    return github.comments[0]["body"]
+
+
+def test_the_headline_of_a_retest_covers_the_rows_it_did_not_rerun(github, tmp_path):
+    body = merged_body(
+        github, tmp_path,
+        [lane("build", "pass"), lane("unit", "infra"), lane("integration", "test")],
+        [lane("build", "pass"), lane("unit", "pass", executed=12)],
+    )
+    assert "Result: **red [test]**" in body and "Result: **pass**" not in body
+    assert "| integration | test |" in body
+
+
+def test_the_headline_of_a_retest_is_pass_when_every_merged_row_passed(github, tmp_path):
+    body = merged_body(
+        github, tmp_path,
+        [lane("build", "pass"), lane("unit", "infra"), lane("integration", "pass", executed=4)],
+        [lane("build", "pass"), lane("unit", "pass", executed=12)],
+    )
+    assert "Result: **pass**" in body
+    assert f"| integration | pass | 4 | - | [previous run]({SERVER}/{REPO}/actions/runs/100) |" in body
+
+
+def test_a_retest_whose_previous_verdict_was_not_uploaded_by_its_gate_step_is_red(github, tmp_path):
+    body = merged_body(
+        github, tmp_path,
+        [lane("build", "pass"), lane("unit", "infra"), lane("integration", "pass", executed=4)],
+        [lane("build", "pass"), lane("unit", "pass", executed=12)],
+        steps=({**UPLOAD, "started_at": "2026-01-02T03:10:07Z", "completed_at": "2026-01-02T03:10:08Z"},),
+    )
+    assert "Result: **red [test]**" in body and "could not be verified" in body
+    assert "integration" not in body
 
 
 def test_a_user_comment_carrying_the_marker_is_never_edited(github, tmp_path):
@@ -299,7 +353,7 @@ def test_a_retest_drops_prior_rows_whose_verdict_disagrees_with_the_gate_job(git
     assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
     body = github.comments[0]["body"]
     assert "integration" not in body and "previous run](" not in body
-    assert "disagrees with its gate job" in body
+    assert "could not be verified" in body and "Result: **red [test]**" in body
 
 
 def test_a_retest_drops_prior_rows_when_the_gate_job_cannot_be_read(github, tmp_path):
@@ -307,14 +361,15 @@ def test_a_retest_drops_prior_rows_when_the_gate_job_cannot_be_read(github, tmp_
     assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
     body = github.comments[0]["body"]
     assert "integration" not in body
-    assert "could not be read" in body
+    assert "could not be verified" in body and "Result: **red [test]**" in body
 
 
 def test_a_retest_drops_prior_rows_when_the_gate_job_is_missing(github, tmp_path):
     prior_infra_run(github, "failure")
     github.jobs["100"] = github.jobs["100"][:1]
     assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
-    assert "could not be read" in github.comments[0]["body"]
+    assert "could not be verified" in github.comments[0]["body"]
+    assert "Result: **red [test]**" in github.comments[0]["body"]
 
 
 @pytest.mark.parametrize(
@@ -334,7 +389,8 @@ def test_a_verdict_that_disagrees_with_this_run_gate_result_is_refused_before_an
 
 def test_an_unreadable_prior_run_still_writes_the_comment(github, tmp_path):
     assert upsert(tmp_path, make_state(retest=True, retest_of="100")) == 0
-    assert "could not be read" in github.comments[0]["body"]
+    assert "could not be verified" in github.comments[0]["body"]
+    assert "Result: **red [test]**" in github.comments[0]["body"]
 
 
 def test_a_first_run_never_reads_a_prior_run(github, tmp_path):
@@ -396,7 +452,7 @@ def test_parse_state_rejects_unknown_keys_and_inconsistent_retest():
     assert comment.parse_state(json.dumps(make_state(retest=True, run_attempt=2)))["retest"] is True
 
 
-@pytest.mark.parametrize("name", ["core/comment.py", "core/retest_sim.py"])
+@pytest.mark.parametrize("name", ["core/comment.py", "core/retest_sim.py", "core/prior.py"])
 def test_tools_import_only_the_standard_library_and_core(name):
     tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
     modules = [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
