@@ -28,7 +28,7 @@ def integrity(text):
 
 
 def lockfile(**override):
-    entry = {"version": "1.0.0", "resolved": "https://registry.example.test/a/-/a-1.0.0.tgz",
+    entry = {"version": "1.0.0", "resolved": "https://registry.npmjs.org/a/-/a-1.0.0.tgz",
              "integrity": integrity("a")}
     entry.update(override)
     return {"lockfileVersion": 3, "packages": {
@@ -36,7 +36,7 @@ def lockfile(**override):
         "libs/one": {"name": "one"},
         "node_modules/one": {"resolved": "libs/one", "link": True},
         "node_modules/a": entry,
-        "node_modules/a/node_modules/b": {"resolved": "https://registry.example.test/b/-/b-1.0.0.tgz",
+        "node_modules/a/node_modules/b": {"resolved": "https://registry.npmjs.org/b/-/b-1.0.0.tgz",
                                           "integrity": integrity("b")},
     }}
 
@@ -191,6 +191,11 @@ def test_the_committed_sim_lockfile_is_fully_verifiable():
     {"integrity": "sha1-" + "a" * 27 + "="},
     {"resolved": "http://registry.example.test/a/-/a-1.0.0.tgz"},
     {"resolved": "git+ssh://example.test/a.git"},
+    {"resolved": "https://registry.example.test/a/-/a-1.0.0.tgz"},
+    {"resolved": "https://registry.npmjs.org.example.test/a/-/a-1.0.0.tgz"},
+    {"resolved": "https://registry.npmjs.org@example.test/a/-/a-1.0.0.tgz"},
+    {"resolved": "http://registry.npmjs.org/a/-/a-1.0.0.tgz"},
+    {"resolved": "https://registry.npmjs.org"},
 ])
 def test_registry_entry_npm_cannot_verify_is_refused(override):
     with pytest.raises(cache.LockfileError):

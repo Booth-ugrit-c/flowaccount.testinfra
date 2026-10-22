@@ -37,6 +37,7 @@ on:
         type: choice
         options:
           - dotnet
+          - workspace
       lanes:
         description: Comma-separated lanes to run; empty runs every lane
         required: false
@@ -60,6 +61,8 @@ on:
           - fail_test
           - kill_onprem
           - kill_both
+          - fail_health_once
+          - fail_health_twice
       retest_of:
         description: Run id this run retests, or empty
         required: false
@@ -100,13 +103,14 @@ jobs:
           BASE_REF: ${{ inputs.base }}
           RETEST_OF: ${{ inputs.retest_of }}
           LANES: ${{ inputs.lanes }}
-          KNOWN_LANES: unit integration
+          KNOWN_LANES: ${{ inputs.stack == 'workspace' && 'unit' || 'unit integration' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: sh core/resolve_refs.sh
 
   build:
     name: build
     needs: validate
+    if: ${{ inputs.stack == 'dotnet' }}
     permissions:
       contents: read
       actions: read
@@ -177,6 +181,28 @@ jobs:
       artifact: ${{ needs.build.outputs.artifact }}
       parallel: 1
 
+  workspace:
+    name: workspace
+    needs: validate
+    if: ${{ inputs.stack == 'workspace' && needs.validate.outputs.lane_unit == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      id-token: write
+    uses: ./.github/workflows/tpl-workspace-unit.yml # zizmor: ignore[self-repository]
+    with:
+      pr_number: ${{ needs.validate.outputs.pr_number }}
+      pr_branch: ${{ needs.validate.outputs.pr_branch }}
+      pr_author: ${{ needs.validate.outputs.pr_author }}
+      pr_sha: ${{ needs.validate.outputs.pr_sha }}
+      base_sha: ${{ needs.validate.outputs.base_sha }}
+      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}
+      runner_label: ${{ vars.SIM_LAB_LABEL_WORKSPACE }}
+      cache: ${{ inputs.cache }}
+      retest: ${{ needs.validate.outputs.retest_of != '' || github.run_attempt != '1' }}
+      sim_fault: ${{ inputs.fault != 'none' && inputs.fault || '' }}
+
   gate:
     name: gate
     needs:
@@ -184,9 +210,12 @@ jobs:
       - build
       - unit
       - integration
+      - workspace
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -197,6 +226,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Decide
+        id: decide
         env:
           STACK: ${{ inputs.stack }}
           CACHE: ${{ inputs.cache }}
@@ -218,18 +248,32 @@ jobs:
           INTEGRATION_VERDICT: ${{ needs.integration.outputs.verdict }}
           INTEGRATION_REASON: ${{ needs.integration.outputs.reason }}
           INTEGRATION_EXECUTED: ${{ needs.integration.outputs.executed }}
+          WORKSPACE_VERDICT: ${{ needs.workspace.outputs.verdict }}
+          WORKSPACE_REASON: ${{ needs.workspace.outputs.reason }}
+          WORKSPACE_EXECUTED: ${{ needs.workspace.outputs.executed }}
         run: |
           set -eu
-          set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"
-          case "$UNIT_SELECTED" in
-              true) set -- "$@" --lane "unit=${UNIT_VERDICT}" --reason "unit=${UNIT_REASON}" --executed "unit=${UNIT_EXECUTED}" ;;
-              false) echo "lane unit: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
-              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
-          esac
-          case "$INTEGRATION_SELECTED" in
-              true) set -- "$@" --lane "integration=${INTEGRATION_VERDICT}" --reason "integration=${INTEGRATION_REASON}" --executed "integration=${INTEGRATION_EXECUTED}" ;;
-              false) echo "lane integration: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
-              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+          case "$STACK" in
+              dotnet)
+                  set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"
+                  case "$UNIT_SELECTED" in
+                      true) set -- "$@" --lane "unit=${UNIT_VERDICT}" --reason "unit=${UNIT_REASON}" --executed "unit=${UNIT_EXECUTED}" ;;
+                      false) echo "lane unit: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+                      *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+                  esac
+                  case "$INTEGRATION_SELECTED" in
+                      true) set -- "$@" --lane "integration=${INTEGRATION_VERDICT}" --reason "integration=${INTEGRATION_REASON}" --executed "integration=${INTEGRATION_EXECUTED}" ;;
+                      false) echo "lane integration: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+                      *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+                  esac
+                  ;;
+              workspace)
+                  case "$UNIT_SELECTED" in
+                      true) set -- --lane "unit=${WORKSPACE_VERDICT}" --reason "unit=${WORKSPACE_REASON}" --executed "unit=${WORKSPACE_EXECUTED}" ;;
+                      *) echo "gate: red [test]: stack workspace has no selected lane"; exit 1 ;;
+                  esac
+                  ;;
+              *) echo "gate: red [test]: unknown stack"; exit 1 ;;
           esac
           case "$RETEST" in
               true) set -- "$@" --retest ;;
@@ -247,3 +291,58 @@ jobs:
           path: ${{ runner.temp }}/verdict/verdict.json
           if-no-files-found: ignore
           retention-days: 1
+
+  comment:
+    name: comment
+    needs:
+      - validate
+      - gate
+    if: ${{ always() && needs.validate.outputs.pr_number != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Download verdict
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sim-gate-verdict
+          path: ${{ runner.temp }}/verdict
+      - name: Upsert
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate.outputs.pr_number }}
+          STACK: ${{ inputs.stack }}
+          GATE_RESULT: ${{ needs.gate.result }}
+          RUN_URL: ${{ format('{0}/{1}/actions/runs/{2}/attempts/{3}', github.server_url, github.repository, github.run_id, github.run_attempt) }}
+        run: python3 -m core.comment upsert --pr "$PR_NUMBER" --marker "sim-gate:${STACK}" --state "$RUNNER_TEMP/verdict/verdict.json" --run-url "$RUN_URL" --gate-result "$GATE_RESULT"
+
+  requeue:
+    name: requeue
+    needs:
+      - validate
+      - gate
+    if: ${{ always() && needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && needs.gate.outputs.retest_lanes != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Dispatch the retest stand-in
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          [ "$GITHUB_REF" = "refs/heads/${GITHUB_REF_NAME}" ]
+          gh workflow run sim-retest.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f run_id="$GITHUB_RUN_ID"

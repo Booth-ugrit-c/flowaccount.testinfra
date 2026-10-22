@@ -283,24 +283,28 @@ RETEST = "sim-retest.yml"
 ROUTE = "tpl-route.yml"
 BUILD = "tpl-dotnet-build.yml"
 LANE = "tpl-dotnet-lane.yml"
-SIM_WORKFLOWS = {ENTRY, RETEST, ROUTE, BUILD, LANE}
+WS = "tpl-workspace-unit.yml"
+SIM_WORKFLOWS = {ENTRY, RETEST, ROUTE, BUILD, LANE, WS}
 OTHER_WORKFLOWS = {"ci.yml", "leak-guard.yml", "leak-guard-scheduled.yml", "trial-gate.yml"}
 DISPATCH_ONLY = {ENTRY, RETEST}
-CALLED = {ROUTE, BUILD, LANE}
-WORK = (BUILD, LANE)
+CALLED = {ROUTE, BUILD, LANE, WS}
+WORK = (BUILD, LANE, WS)
 ROUTE_USES = "./.github/workflows/tpl-route.yml"
 BUILD_USES = "./.github/workflows/tpl-dotnet-build.yml"
 LANE_USES = "./.github/workflows/tpl-dotnet-lane.yml"
+WS_USES = "./.github/workflows/tpl-workspace-unit.yml"
+STACKS = ("dotnet", "workspace")
 HOSTED = "ubuntu-24.04"
 RUNNER = "${{ needs.route.outputs.target == 'onprem' && inputs.runner_label || 'ubuntu-24.04' }}"
 SOLUTION_GLOBAL_JSON = "${{ inputs.solution_root }}/global.json"
 CACHE_BUILD = "adapters/dotnet/cache_build.sh"
 FULL_SHA = "0123456789abcdef0123456789abcdef01234567"
-FAULTS = ("none", "fail_test", "kill_onprem", "kill_both")
-SIM_FAULTS = ("", "fail_test", "kill_onprem", "kill_both", "other")
+FAULTS = ("none", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice")
+SIM_FAULTS = ("", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice", "other")
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
 UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 
 SECRET_REF = re.compile(r"""\bsecrets\s*[.\[]\s*['"]?([A-Za-z0-9_]+)""")
 ENDPOINT_NAMES = ("SIM_CACHE_ENDPOINT_LAB", "SIM_CACHE_ENDPOINT_TAILNET")
@@ -310,22 +314,37 @@ TRIPWIRE_STEP = "Cache tripwire"
 RESTORE_STEP = "Restore cache"
 SAVE_STEP = "Save cache"
 SECRET_STEPS = {"endpoint": {TRIPWIRE_STEP, RESTORE_STEP, SAVE_STEP}, "reader": {TRIPWIRE_STEP, RESTORE_STEP}, "writer": {SAVE_STEP}}
+SECRET_PLACES = {
+    (BUILD, "run"): SECRET_STEPS,
+    (WS, "run"): {"endpoint": {TRIPWIRE_STEP, RESTORE_STEP}, "reader": {TRIPWIRE_STEP, RESTORE_STEP}, "writer": set()},
+    (WS, "save"): {"endpoint": {TRIPWIRE_STEP, SAVE_STEP}, "reader": {TRIPWIRE_STEP}, "writer": {SAVE_STEP}},
+}
+JOIN_PLACES = set(SECRET_PLACES)
 WRITE_ENVIRONMENT = "sim-cache-write"
 READ_ENVIRONMENT = "sim-cache-read"
 LAB_ENVIRONMENT = "sim-cache-lab"
-ENVIRONMENT_PLACES = {(ROUTE, "route"), (BUILD, "run")}
+ENVIRONMENT_PLACES = {(ROUTE, "route"), (BUILD, "run"), (WS, "run"), (WS, "save")}
 BUILD_CALLER = {"contents": "read", "actions": "read", "checks": "read", "id-token": "write"}
 LANE_CALLER = {"contents": "read", "actions": "read", "checks": "read"}
 CLASSIFY_PERMISSIONS = {"contents": "read", "actions": "read", "checks": "read"}
+CACHE_JOB = {"contents": "read", "id-token": "write"}
 PERMISSION_MAP = {
     (ENTRY, "build"): BUILD_CALLER,
     (ENTRY, "unit"): LANE_CALLER,
     (ENTRY, "integration"): LANE_CALLER,
-    (BUILD, "run"): {"contents": "read", "id-token": "write"},
+    (ENTRY, "workspace"): BUILD_CALLER,
+    (BUILD, "run"): CACHE_JOB,
     (BUILD, "classify"): CLASSIFY_PERMISSIONS,
     (LANE, "classify"): CLASSIFY_PERMISSIONS,
+    (WS, "run"): CACHE_JOB,
+    (WS, "save"): CACHE_JOB,
+    (WS, "classify"): CLASSIFY_PERMISSIONS,
+    (ENTRY, "comment"): {"contents": "read", "actions": "read", "pull-requests": "write"},
+    (ENTRY, "requeue"): {"contents": "read", "actions": "write"},
+    (RETEST, "requeue"): {"contents": "read", "actions": "write"},
 }
 ID_TOKEN_PLACES = {(name, ("jobs", job, "permissions")) for (name, job), wanted in PERMISSION_MAP.items() if "id-token" in wanted}
+WRITE_PLACES = {(name, ("jobs", job, "permissions", scope)) for (name, job), wanted in PERMISSION_MAP.items() for scope, level in wanted.items() if level == "write"}
 
 DOTNET_ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1", "MSBUILDDISABLENODEREUSE": "1", "DOTNET_CLI_USE_MSBUILD_SERVER": "0"}
 FAIL_TEST_ENV = "${{ inputs.sim_fault == 'fail_test' && '1' || '0' }}"
@@ -353,7 +372,20 @@ sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/h
 SAVE_RUN = f'sh {CACHE_BUILD} save "$RUNNER_TEMP/built.txt"'
 ARTIFACT = "dotnet-build-${{ github.run_attempt }}"
 SAVE_ENV = {"SIM_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}", "SIM_CACHE_MODE": "${{ inputs.cache }}", **WRITER_ENV}
+FAIL_HEALTH_ENV = "${{ inputs.sim_fault == 'fail_health_twice' || inputs.sim_fault == 'fail_health_once' && inputs.retest != true }}"
+HEALTH_RUN = """set -eu
+mkdir -p "$RUNNER_TEMP/markers"
+echo "MARKERS=$RUNNER_TEMP/markers" >> "$GITHUB_ENV"
+if [ "$FAIL_HEALTH" = true ]; then
+    echo "::error::injected health failure"
+    exit 1
+fi
+python3 --version
+(cd "$SIM_ROOT" && dotnet --version)
+touch "$RUNNER_TEMP/markers/health"
+"""
 BUILD_PINS = {
+    "Health": {"name": "Health", "env": {"FAIL_HEALTH": FAIL_HEALTH_ENV}, "run": HEALTH_RUN},
     TRIPWIRE_STEP: {"name": TRIPWIRE_STEP, "env": {"SIM_TAILNET_JOIN": "${{ steps.join.outcome }}", **READER_ENV}, "run": TRIPWIRE_RUN},
     RESTORE_STEP: {"name": RESTORE_STEP, "env": {"FAIL_TEST": FAIL_TEST_ENV, "SIM_CACHE_MODE": "${{ inputs.cache }}", **READER_ENV}, "run": RESTORE_RUN},
     "Build": {"name": "Build", "env": {"FAIL_TEST": FAIL_TEST_ENV, **DOTNET_ENV}, "run": BUILD_RUN},
@@ -426,9 +458,14 @@ CLASSIFY_CALLS = {
     ' --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt" --infra-step "Set up .NET" --infra-step "Upload build" --done-marker build',
     LANE: 'python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME"'
     ' --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt" --infra-step "Set up .NET" --infra-step "Download build"',
+    WS: 'python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "run workspace-unit" --fetch-artifact markers-workspace-unit'
+    ' --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt" --infra-step "Set up Node" --done-marker test-end',
 }
+INFRA_STEP_ARG = re.compile(r'--infra-step\s+"([^"]*)"')
+WS_INFRA_STEPS = ["Set up Node"]
 CLASSIFY_ENVS = {
     BUILD: {"GITHUB_TOKEN": "${{ github.token }}", "RUN_RESULT": "${{ needs.run.result }}"},
+    WS: {"GITHUB_TOKEN": "${{ github.token }}", "RUN_RESULT": "${{ needs.run.result }}"},
     LANE: {
         "GITHUB_TOKEN": "${{ github.token }}",
         "JOB_SUFFIX": "run dotnet-${{ inputs.lane }}",
@@ -436,8 +473,8 @@ CLASSIFY_ENVS = {
         "RUN_RESULT": "${{ needs.run.result }}",
     },
 }
-CLASSIFY_NAMES = {BUILD: "classify dotnet-build", LANE: "classify dotnet-${{ inputs.lane }}"}
-RUN_NAMES = {BUILD: "run dotnet-build", LANE: "run dotnet-${{ inputs.lane }}"}
+CLASSIFY_NAMES = {BUILD: "classify dotnet-build", LANE: "classify dotnet-${{ inputs.lane }}", WS: "classify workspace-unit"}
+RUN_NAMES = {BUILD: "run dotnet-build", LANE: "run dotnet-${{ inputs.lane }}", WS: "run workspace-unit"}
 
 
 def classify_job(name):
@@ -474,8 +511,13 @@ WORKFLOW_OUTPUTS = {
         "reason": "${{ jobs.classify.outputs.reason }}",
         "executed": "${{ jobs.run.outputs.executed }}",
     },
+    WS: {
+        "verdict": "${{ jobs.classify.outputs.verdict }}",
+        "reason": "${{ jobs.classify.outputs.reason }}",
+        "executed": "${{ jobs.run.outputs.executed }}",
+    },
 }
-RUN_OUTPUTS = {BUILD: {"artifact": ARTIFACT}, LANE: {"executed": "${{ steps.zero.outputs.executed }}"}}
+RUN_OUTPUTS = {BUILD: {"artifact": ARTIFACT}, LANE: {"executed": "${{ steps.zero.outputs.executed }}"}, WS: {"executed": "${{ steps.zero.outputs.executed }}"}}
 
 
 def run_steps(docs, name):
@@ -534,14 +576,14 @@ def secret_allowed(docs, name, path, secret, value):
     exact = value.strip() == "${{ secrets." + secret + " }}"
     if secret == TOKEN_NAME:
         return exact and key == secret and name == ROUTE and path[:3] == ("jobs", "route", "steps") and path[4:5] == ("env",) and len(path) == 6
-    in_run_step = name == BUILD and path[:3] == ("jobs", "run", "steps") and len(path) == 6
-    if not in_run_step:
+    place = (name, path[1]) if len(path) == 6 and path[0] == "jobs" and path[2] == "steps" else None
+    if place not in SECRET_PLACES:
         return False
-    step = docs[name]["jobs"]["run"]["steps"][path[3]]
+    step = docs[name]["jobs"][path[1]]["steps"][path[3]]
     if secret in TAILNET_INPUTS:
         return exact and key == TAILNET_INPUTS[secret] and path[4] == "with" and step.get("name") == JOIN_STEP
     kind = secret_class(secret)
-    return kind is not None and exact and key == secret and path[4] == "env" and step.get("name") in SECRET_STEPS[kind]
+    return kind is not None and exact and key == secret and path[4] == "env" and step.get("name") in SECRET_PLACES[place][kind]
 
 
 def secret_violations(docs):
@@ -627,6 +669,21 @@ def environment_violations(docs):
                             found.append(
                                 f"{BUILD}: the run environment is {chosen!r} for target {target!r}, label {label!r}, ref {ref}, default_tip {default_tip}, fault {fault!r}; wanted {wanted!r}"
                             )
+                        lane_env = evaluate(str(docs[WS]["jobs"]["run"].get("environment", "")), context)
+                        if lane_env != (READ_ENVIRONMENT if hosted else LAB_ENVIRONMENT):
+                            found.append(
+                                f"{WS}: the run environment is {lane_env!r} for target {target!r}, label {label!r}, ref {ref}, default_tip {default_tip}, fault {fault!r}; the run job never holds the writer key"
+                            )
+    save = docs[WS]["jobs"].get("save", {})
+    if save.get("environment") != WRITE_ENVIRONMENT or save.get("runs-on") != HOSTED:
+        found.append(f"{WS}: the save job must run on {HOSTED} in {WRITE_ENVIRONMENT}")
+    guard = save.get("if")
+    hosted_ok = {key: value for key, value in SAVE_OK.items() if key != "runner.environment"}
+    refused = [context for context in SAVE_REFUSED if context.get("runner.environment") != "self-hosted"]
+    if guard is None or not truthy(evaluate(condition(str(guard)), hosted_ok)) or any(truthy(evaluate(condition(str(guard)), c)) for c in refused):
+        found.append(f"{WS}: the save job must run only on the default-branch tip with no fault")
+    if GUARD_NAME_COMPARE.search(str(guard)):
+        found.append(f"{WS}: the save job guard must not compare the PR head by name; use inputs.default_tip")
     for name in WORK:
         for job_id in ("route", "classify"):
             if "environment" in docs[name]["jobs"].get(job_id, {}):
@@ -836,7 +893,212 @@ fi
 rm -rf .sim-trusted
 exit "$status"
 """
-FIRST_WORK = ("Set up .NET", "Health", "Services", "Affected", "Build", "Test", "Download build", "Unpack")
+FIRST_WORK = ("Set up .NET", "Set up Node", "Health", "Services", "Install", "Affected", "Build", "Test", "Download build", "Unpack")
+SURVIVORS = {BUILD: DOTNET_SURVIVORS, LANE: DOTNET_SURVIVORS, WS: "node"}
+
+SETUP_NODE = "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1"
+TAILSCALE = "tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd"
+CACHE_NPM = "adapters/workspace/cache_npm.sh"
+WS_ENV = {"SIM_ROOT": "${{ inputs.workspace_root }}", "NPM_CONFIG_USERCONFIG": "/dev/null/user.npmrc", "NPM_CONFIG_GLOBALCONFIG": "/dev/null/global.npmrc"}
+WS_CHECKOUT = {"name": "Checkout", "uses": CHECKOUT, "with": {"ref": "${{ inputs.pr_sha }}", "fetch-depth": "0", "persist-credentials": "false"}}
+WS_PYTHON = {"name": "Set up Python", "uses": SETUP_PYTHON, "with": {"python-version": "3.12"}}
+WS_NODE = {"name": "Set up Node", "uses": SETUP_NODE, "with": {"node-version-file": "${{ inputs.workspace_root }}/.nvmrc", "package-manager-cache": "false"}}
+WS_JOIN = {
+    "name": JOIN_STEP,
+    "id": "join",
+    "if": "${{ runner.environment == 'github-hosted' }}",
+    "continue-on-error": "true",
+    "timeout-minutes": "3",
+    "uses": TAILSCALE,
+    "with": {
+        "oauth-client-id": "${{ secrets.SIM_TAILNET_CLIENT_ID }}",
+        "audience": "${{ secrets.SIM_TAILNET_AUDIENCE }}",
+        "tags": "tag:ci-sim",
+        "args": "--accept-routes=false",
+        "use-cache": "false",
+    },
+}
+WS_INSTALL_RUN = """set -eu
+cd "$SIM_ROOT"
+npm ci --cache "$RUNNER_TEMP/npm-cache" --prefer-offline --ignore-scripts --no-audit --no-fund
+"""
+WS_INSTALL = {"name": "Install", "run": WS_INSTALL_RUN}
+WS_HEALTH_RUN = """set -eu
+mkdir -p "$RUNNER_TEMP/markers"
+echo "MARKERS=$RUNNER_TEMP/markers" >> "$GITHUB_ENV"
+if [ "$FAIL_HEALTH" = true ]; then
+    echo "::error::injected health failure"
+    exit 1
+fi
+python3 --version
+node --version
+npm --version
+touch "$RUNNER_TEMP/markers/health"
+"""
+WS_AFFECTED_RUN = 'python3 -m adapters.workspace.affected --base "$BASE_SHA" --head "$HEAD_SHA" --root "$SIM_ROOT" > "$RUNNER_TEMP/affected.json"'
+WS_AFFECTED = {"name": "Affected", "env": {"BASE_SHA": "${{ inputs.base_sha }}", "HEAD_SHA": "${{ inputs.pr_sha }}"}, "run": WS_AFFECTED_RUN}
+FULL_ENV = "${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sim_fault == '' && runner.environment == 'github-hosted' && '1' || '0' }}"
+WS_PLAN_RUN = """set -eu
+set --
+if [ "$FULL" = 1 ]; then
+    set -- --all
+fi
+python3 -m adapters.workspace.plan --affected "$RUNNER_TEMP/affected.json" "$@" --lane unit --emit test --names > "$RUNNER_TEMP/unit.txt"
+python3 -m adapters.workspace.plan --affected "$RUNNER_TEMP/affected.json" "$@" --lane unit --emit test > "$RUNNER_TEMP/unit-roots.txt"
+"""
+WS_TEST_RUN = """set -u
+touch "$MARKERS/test-start"
+if [ "$KILL_RUNNER" = true ]; then
+    sh "$GITHUB_WORKSPACE/core/kill_own_runner.sh" || exit 1
+    sleep 600
+fi
+if [ "$FAIL_TEST" = 1 ]; then
+    project=$(head -n 1 "$RUNNER_TEMP/unit-roots.txt")
+    [ -z "$project" ] || printf '%s\\n' 'test("asserts the wrong value", () => expect(1).toBe(2));' > "$GITHUB_WORKSPACE/$project/forced-failure.test.js"
+fi
+status=0
+sh adapters/workspace/test_lane.sh "$RUNNER_TEMP/unit.txt" "$RUNNER_TEMP/counts" "$PARALLEL" || status=1
+touch "$MARKERS/test-end"
+exit "$status"
+"""
+WS_ZERO_RUN = ZERO_RUN.replace("$RUNNER_TEMP/build/$LANE.txt", "$RUNNER_TEMP/unit.txt")
+WS_TRIPWIRE_RUN = f'sh {CACHE_NPM} tripwire "$MARKERS"'
+WS_RESTORE_RUN = f'sh {CACHE_NPM} restore "$RUNNER_TEMP/npm-cache"'
+WS_SAVE_RUN = f'sh {CACHE_NPM} save "$RUNNER_TEMP/npm-cache"'
+WS_RUN_STEPS = [
+    WS_CHECKOUT,
+    {**WS_PYTHON, "if": "${{ runner.environment == 'github-hosted' }}"},
+    {"name": TRUSTED_CHECKOUT, "if": "${{ runner.environment == 'self-hosted' }}", "uses": CHECKOUT, "with": TRUSTED_OPTIONS},
+    {"name": "Hygiene", "if": "${{ runner.environment == 'self-hosted' }}", "env": {"SIM_SURVIVORS": "node"}, "run": HYGIENE_RUN},
+    WS_NODE,
+    {"name": "Health", "env": {"FAIL_HEALTH": FAIL_HEALTH_ENV}, "run": WS_HEALTH_RUN},
+    WS_JOIN,
+    {"name": TRIPWIRE_STEP, "env": {"SIM_TAILNET_JOIN": "${{ steps.join.outcome }}", **READER_ENV}, "run": WS_TRIPWIRE_RUN},
+    {"name": RESTORE_STEP, "env": {"SIM_CACHE_MODE": "${{ inputs.cache }}", **READER_ENV}, "run": WS_RESTORE_RUN},
+    WS_INSTALL,
+    WS_AFFECTED,
+    {"name": "Plan", "env": {"FULL": FULL_ENV}, "run": WS_PLAN_RUN},
+    {"name": "Test", "env": {"PARALLEL": "0", "KILL_RUNNER": KILL_RUNNER, "FAIL_TEST": FAIL_TEST_ENV}, "run": WS_TEST_RUN},
+    {"name": "Zero tests", "id": "zero", "run": WS_ZERO_RUN},
+    {
+        "name": "Upload markers",
+        "if": "${{ always() }}",
+        "uses": UPLOAD,
+        "with": {"name": "markers-workspace-unit", "path": "${{ runner.temp }}/markers", "if-no-files-found": "ignore", "retention-days": "1"},
+    },
+]
+WS_RUN_JOB = {
+    "name": RUN_NAMES[WS],
+    "needs": "route",
+    "if": "${{ !cancelled() }}",
+    "runs-on": RUNNER,
+    "timeout-minutes": "25",
+    "environment": "${{ needs.route.outputs.target == 'onprem' && inputs.runner_label != '' && 'sim-cache-lab' || 'sim-cache-read' }}",
+    "permissions": CACHE_JOB,
+    "env": WS_ENV,
+    "outputs": RUN_OUTPUTS[WS],
+    "steps": WS_RUN_STEPS,
+}
+SAVE_JOB_GUARD = "${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sim_fault == '' }}"
+WS_SAVE_GUARD = "${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sim_fault == '' && runner.environment == 'github-hosted' }}"
+WS_SAVE_ENV = {"MARKERS": "${{ runner.temp }}/markers", **SAVE_ENV}
+WS_SAVE_JOB = {
+    "name": "save workspace-unit",
+    "if": SAVE_JOB_GUARD,
+    "runs-on": HOSTED,
+    "timeout-minutes": "15",
+    "environment": WRITE_ENVIRONMENT,
+    "permissions": CACHE_JOB,
+    "env": WS_ENV,
+    "steps": [
+        WS_CHECKOUT,
+        WS_PYTHON,
+        WS_NODE,
+        WS_JOIN,
+        {
+            "name": TRIPWIRE_STEP,
+            "env": {"MARKERS": "${{ runner.temp }}/markers", "SIM_TAILNET_JOIN": "${{ steps.join.outcome }}", **READER_ENV},
+            "run": WS_TRIPWIRE_RUN,
+        },
+        WS_INSTALL,
+        {"name": SAVE_STEP, "if": WS_SAVE_GUARD, "env": WS_SAVE_ENV, "run": WS_SAVE_RUN},
+    ],
+}
+WS_JOBS = ["route", "run", "save", "classify"]
+HEAD_CODE = re.compile(r"\bnx\b|\bjest\b|\bnpx\b|\bnpm\s+(?:run|test|exec|start)\b|test_lane\.sh|adapters[./]workspace[./](?:affected|plan)\b")
+
+
+def workspace_violations(docs):
+    found = []
+    jobs = docs[WS]["jobs"]
+    if list(jobs) != WS_JOBS:
+        found.append(f"{WS}: the jobs are {list(jobs)}, the pinned set and order is {WS_JOBS}")
+    if jobs.get("run") != WS_RUN_JOB:
+        found.append(f"{WS}: the run job must be exactly the pinned job, every step and key included")
+    if jobs.get("save") != WS_SAVE_JOB:
+        found.append(f"{WS}: the save job must be exactly the pinned job: main tip only, hosted, install and save, nothing else")
+    affected = step_named(docs, WS, "Affected")
+    if "continue-on-error" in affected or "if" in affected:
+        found.append(f"{WS}: the Affected step must have no continue-on-error and no if; a graph error exits 2 and the run is red")
+    if "||" in str(affected.get("run", "")) or ";" in str(affected.get("run", "")):
+        found.append(f"{WS}: the Affected step must not soften its exit with || or a following command; a graph error exits 2 and the run is red")
+    classify = next((st for st in jobs.get("classify", {}).get("steps", []) if st.get("name") == "Classify"), {})
+    infra = INFRA_STEP_ARG.findall(str(classify.get("run", "")))
+    if infra != WS_INFRA_STEPS:
+        found.append(f"{WS}: classify names infra steps {infra}, only {WS_INFRA_STEPS}; Affected, Install and Test failures are the change's")
+    for job_id, job in jobs.items():
+        holds_writer = any(WRITER_PREFIX in str(value) or WRITER_PREFIX in str(path[-1]) for path, value in walk(job))
+        if holds_writer and job_id != "save":
+            found.append(f"{WS}: job {job_id} holds the cache writer key; only the save job may")
+        if holds_writer:
+            for step in job.get("steps", []):
+                if HEAD_CODE.search(str(step.get("run", ""))):
+                    found.append(f"{WS}: the job holding the cache writer key runs workspace code in step {step.get('name')}; it may only install and save")
+    return found
+
+
+CI_WORKSPACE_RUNS = (
+    "npm ci --ignore-scripts --no-audit --no-fund",
+    "npx nx run-many -t test --skip-nx-cache --outputStyle=static",
+    "npm audit --audit-level=high --package-lock-only",
+)
+
+
+def ci_violations(directory):
+    try:
+        jobs = parse((Path(directory) / "ci.yml").read_text(encoding="utf-8")).get("jobs", {})
+    except (OSError, Unsupported):
+        return ["ci.yml: the policy cannot read the CI workflow"]
+    found = []
+    workspace = jobs.get("workspace", {})
+    runs = [str(step.get("run", "")).strip() for step in workspace.get("steps", [])]
+    if runs[-3:] != list(CI_WORKSPACE_RUNS) or workspace.get("defaults") != {"run": {"working-directory": "sim/workspace"}}:
+        found.append(f"ci.yml: the workspace job must end with {list(CI_WORKSPACE_RUNS)} in sim/workspace, one step each")
+    if any(path[-1:] in (("continue-on-error",), ("if",)) for path, _ in walk(workspace)):
+        found.append("ci.yml: the workspace job must have no continue-on-error and no if; install, tests and audit all gate")
+    shellcheck = [str(step.get("run", "")).split() for step in jobs.get("workflow-lint", {}).get("steps", []) if str(step.get("run", "")).startswith("shellcheck")]
+    if len(shellcheck) != 1 or "adapters/*/*.sh" not in shellcheck[0]:
+        found.append("ci.yml: shellcheck must cover adapters/*/*.sh")
+    return found
+
+
+NPM_INSTALL = re.compile(r"\bnpm\s+(?:ci|install|i|add|update)\b")
+
+
+def npm_violations(directory):
+    found = []
+    for path in workflow_files(directory):
+        try:
+            doc = parse(path.read_text(encoding="utf-8"))
+        except Unsupported:
+            continue
+        for where, value in walk(doc):
+            if where[-1:] != ("run",):
+                continue
+            for line in str(value).split("\n"):
+                if NPM_INSTALL.search(line) and "--ignore-scripts" not in line:
+                    found.append(f"{path.name}: npm installs without --ignore-scripts: {line.strip()}")
+    return found
 
 
 def hygiene_violations(docs):
@@ -851,8 +1113,8 @@ def hygiene_violations(docs):
         step = steps[hygiene]
         if step.get("run") != HYGIENE_RUN:
             found.append(f"{name}: the Hygiene step must run the trusted copy exactly: sh .sim-trusted/core/prejob.sh, then remove it")
-        if step.get("env") != {"SIM_SURVIVORS": DOTNET_SURVIVORS}:
-            found.append(f"{name}: the Hygiene step must pass exactly SIM_SURVIVORS: {DOTNET_SURVIVORS}")
+        if step.get("env") != {"SIM_SURVIVORS": SURVIVORS[name]}:
+            found.append(f"{name}: the Hygiene step must pass exactly SIM_SURVIVORS: {SURVIVORS[name]}")
         if set(step) != {"name", "if", "env", "run"}:
             found.append(f"{name}: the Hygiene step must have exactly name, if, env and run")
         if not self_hosted_only(step):
@@ -879,7 +1141,8 @@ def hygiene_violations(docs):
     return found
 
 
-LABELS = {"build": "SIM_LAB_LABEL_BUILD", "unit": "SIM_LAB_LABEL_UNIT", "integration": "SIM_LAB_LABEL_INTEGRATION"}
+ROUTE_LABEL = "${{ inputs.retest != true && inputs.runner_label || '' }}"
+LABELS = {"build": "SIM_LAB_LABEL_BUILD", "unit": "SIM_LAB_LABEL_UNIT", "integration": "SIM_LAB_LABEL_INTEGRATION", "workspace": "SIM_LAB_LABEL_WORKSPACE"}
 
 
 def runner_violations(docs):
@@ -899,8 +1162,15 @@ def runner_violations(docs):
     for name in WORK:
         jobs = docs[name]["jobs"]
         route = jobs.get("route", {})
-        if str(route.get("uses", "")).split(" ")[0] != ROUTE_USES or route.get("with") != {"runner_label": "${{ inputs.runner_label }}"}:
-            found.append(f"{name}: the route job must call {ROUTE} with runner_label: ${{{{ inputs.runner_label }}}} and nothing else")
+        if str(route.get("uses", "")).split(" ")[0] != ROUTE_USES or route.get("with") != {"runner_label": ROUTE_LABEL}:
+            found.append(f"{name}: the route job must call {ROUTE} with runner_label: {ROUTE_LABEL} and nothing else")
+        given = str(route.get("with", {}).get("runner_label", ""))
+        for retest in (True, False):
+            for label in ("", "lab"):
+                got = evaluate(given, {"inputs.retest": retest, "inputs.runner_label": label})
+                want = "" if retest else label
+                if not _loose_equal(got, want):
+                    found.append(f"{name}: the route is asked about {got!r} for retest {retest} and label {label!r}; a retest always runs on the cloud")
         run = jobs["run"]
         if run.get("needs") != "route" or str(run.get("if")) != "${{ !cancelled() }}":
             found.append(f"{name}: the run job must need route and run unless cancelled, so a skipped route falls back to the cloud")
@@ -951,7 +1221,7 @@ def fault_violations(docs):
     for option in options:
         if option != "none" and not any(f"'{option}'" in text for text in texts.values()):
             found.append(f"{ENTRY}: fault option {option} is not referenced by any job")
-    for job_id in ("build", *lane_jobs_of(docs)):
+    for job_id in ("build", *lane_jobs_of(docs), "workspace"):
         given = docs[ENTRY]["jobs"].get(job_id, {}).get("with", {})
         for option in FAULTS:
             got = evaluate(str(given.get("sim_fault", "")), {"inputs.fault": option})
@@ -961,6 +1231,12 @@ def fault_violations(docs):
     for fault in SIM_FAULTS:
         if (evaluate(str(fail_test), {"inputs.sim_fault": fault}) == "1") != (fault == "fail_test"):
             found.append(f"{BUILD}: the Build step injects the failing test for fault {fault!r}; only fail_test may")
+    health = step_named(docs, BUILD, "Health").get("env", {}).get("FAIL_HEALTH", "")
+    for fault in SIM_FAULTS:
+        for retest in (True, False):
+            got = truthy(evaluate(str(health), {"inputs.sim_fault": fault, "inputs.retest": retest}))
+            if got != (fault == "fail_health_twice" or fault == "fail_health_once" and not retest):
+                found.append(f"{BUILD}: the Health step fails={got} for fault {fault!r} with retest {retest}")
     kill = step_named(docs, LANE, "Test").get("env", {}).get("KILL_RUNNER", "")
     for fault in SIM_FAULTS:
         for target in ("onprem", "cloud", ""):
@@ -976,7 +1252,7 @@ ENTRY_INPUTS = {
     "pr_sha": {"type": "string", "default": ""},
     "pr_author": {"type": "string", "default": ""},
     "base": {"type": "string", "default": "origin/main"},
-    "stack": {"type": "choice", "default": "dotnet", "options": ["dotnet"]},
+    "stack": {"type": "choice", "default": "dotnet", "options": list(STACKS)},
     "lanes": {"type": "string", "default": ""},
     "cache": {"type": "choice", "default": "use", "options": ["use", "off"]},
     "fault": {"type": "choice", "default": "none"},
@@ -1004,9 +1280,39 @@ def lane_jobs_of(docs):
     return [job_id for job_id, job in jobs.items() if str(job.get("uses", "")).split(" ")[0] == LANE_USES]
 
 
-def known_lanes(docs):
+KNOWN_LANES_EXPR = "${{ inputs.stack == 'workspace' && 'unit' || 'unit integration' }}"
+STACK_LANES = {"dotnet": ["unit", "integration"], "workspace": ["unit"]}
+
+
+def known_lanes(docs, stack="dotnet"):
     resolve = next((st for st in docs[ENTRY]["jobs"]["validate"].get("steps", []) if st.get("id") == "resolve"), {})
-    return str(resolve.get("env", {}).get("KNOWN_LANES", "")).split()
+    return str(evaluate(str(resolve.get("env", {}).get("KNOWN_LANES", "")), {"inputs.stack": stack}) or "").split()
+
+
+def stack_violations(docs):
+    found = []
+    jobs = docs[ENTRY]["jobs"]
+    for stack in STACKS:
+        if known_lanes(docs, stack) != STACK_LANES[stack]:
+            found.append(f"{ENTRY}: validate knows lanes {known_lanes(docs, stack)} for stack {stack}, wanted {STACK_LANES[stack]}")
+    workspace = jobs.get("workspace", {})
+    if str(workspace.get("uses", "")).split(" ")[0] != WS_USES:
+        found.append(f"{ENTRY}: the workspace job must call {WS}")
+    if workspace.get("needs") != "validate":
+        found.append(f"{ENTRY}: the workspace job must need validate only")
+    callers = [(name, job_id) for name, doc in docs.items() for job_id, job in doc["jobs"].items() if str(job.get("uses", "")).split(" ")[0] == WS_USES]
+    if callers != [(ENTRY, "workspace")]:
+        found.append(f"exactly one job, {ENTRY} workspace, may call {WS}; found {callers}")
+    for stack in (*STACKS, "other", ""):
+        for selected in ("true", "false", ""):
+            context = {"inputs.stack": stack, "needs.validate.outputs.lane_unit": selected}
+            build = truthy(evaluate(condition(str(jobs.get("build", {}).get("if", "true"))), context))
+            if build != (stack == "dotnet"):
+                found.append(f"{ENTRY}: the build job runs={build} for stack {stack!r}; it must run for the dotnet stack only")
+            runs = truthy(evaluate(condition(str(workspace.get("if", "true"))), context))
+            if runs != (stack == "workspace" and selected == "true"):
+                found.append(f"{ENTRY}: the workspace job runs={runs} for stack {stack!r} and lane_unit {selected!r}; it must run for the workspace stack's selected unit lane only")
+    return found
 
 
 def entry_contract_violations(docs):
@@ -1056,16 +1362,27 @@ GATE_INPUTS = ("pr_number", "pr_branch", "pr_sha", "pr_author", "base_sha", "cac
 
 
 def decide_run(lanes):
-    lines = ["set -eu", 'set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"']
+    lines = ["set -eu", 'case "$STACK" in', "    dotnet)", '        set -- --lane "build=${BUILD_VERDICT}" --reason "build=${BUILD_REASON}"']
     for lane in lanes:
         upper = lane.upper()
         lines += [
-            f'case "${upper}_SELECTED" in',
-            f'    true) set -- "$@" --lane "{lane}=${{{upper}_VERDICT}}" --reason "{lane}=${{{upper}_REASON}}" --executed "{lane}=${{{upper}_EXECUTED}}" ;;',
-            f'    false) echo "lane {lane}: not selected" >> "$GITHUB_STEP_SUMMARY" ;;',
-            '    *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;',
-            "esac",
+            f'        case "${upper}_SELECTED" in',
+            f'            true) set -- "$@" --lane "{lane}=${{{upper}_VERDICT}}" --reason "{lane}=${{{upper}_REASON}}" --executed "{lane}=${{{upper}_EXECUTED}}" ;;',
+            f'            false) echo "lane {lane}: not selected" >> "$GITHUB_STEP_SUMMARY" ;;',
+            '            *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;',
+            "        esac",
         ]
+    lines += [
+        "        ;;",
+        "    workspace)",
+        '        case "$UNIT_SELECTED" in',
+        '            true) set -- --lane "unit=${WORKSPACE_VERDICT}" --reason "unit=${WORKSPACE_REASON}" --executed "unit=${WORKSPACE_EXECUTED}" ;;',
+        '            *) echo "gate: red [test]: stack workspace has no selected lane"; exit 1 ;;',
+        "        esac",
+        "        ;;",
+        '    *) echo "gate: red [test]: unknown stack"; exit 1 ;;',
+        "esac",
+    ]
     lines += [
         'case "$RETEST" in',
         '    true) set -- "$@" --retest ;;',
@@ -1099,6 +1416,8 @@ def decide_env(lanes):
         env[f"{upper}_SELECTED"] = f"${{{{ needs.validate.outputs.lane_{lane} }}}}"
         for key in ("verdict", "reason", "executed"):
             env[f"{upper}_{key.upper()}"] = f"${{{{ needs.{lane}.outputs.{key} }}}}"
+    for key in ("verdict", "reason", "executed"):
+        env[f"WORKSPACE_{key.upper()}"] = f"${{{{ needs.workspace.outputs.{key} }}}}"
     return env
 
 
@@ -1127,16 +1446,94 @@ def lane_set_violations(docs):
             found.append(f"{ENTRY}: job {lane} must pass lane: {lane}")
     needs = gate.get("needs", [])
     needs = [needs] if isinstance(needs, str) else needs
-    if sorted(needs) != sorted(["validate", "build", *lanes]):
-        found.append(f"{ENTRY}: the gate must need validate, build and every lane, has {needs}")
+    if sorted(needs) != sorted(["validate", "build", *lanes, "workspace"]):
+        found.append(f"{ENTRY}: the gate must need validate, build, every lane and workspace, has {needs}")
     ordered = sorted(lanes, key=list(jobs).index)
-    if decide.get("run") != decide_run(ordered) or decide.get("env") != decide_env(ordered) or set(decide) != {"name", "env", "run"}:
+    if decide.get("run") != decide_run(ordered) or decide.get("env") != decide_env(ordered) or set(decide) != {"name", "id", "env", "run"} or decide.get("id") != "decide":
         found.append(f"{ENTRY}: the Decide step must be exactly the pinned gate invocation and env for build and the selected lanes")
     names = [st.get("name") for st in steps]
     if names != ["Checkout", "Set up Python", "Decide", "Upload verdict"] or steps[-1] != VERDICT_UPLOAD:
         found.append(f"{ENTRY}: the gate job must be Checkout, Set up Python, Decide, then the pinned Upload verdict of sim-gate-verdict")
     if str(gate.get("if")) != "${{ always() }}":
         found.append(f"{ENTRY}: the gate must run always")
+    if gate.get("outputs") != {"retest_lanes": "${{ steps.decide.outputs.retest_lanes }}"}:
+        found.append(f"{ENTRY}: the gate job outputs must be exactly retest_lanes from the Decide step")
+    return found + report_violations(docs)
+
+
+COMMENT_JOB = {
+    "name": "comment",
+    "needs": ["validate", "gate"],
+    "if": "${{ always() && needs.validate.outputs.pr_number != '' }}",
+    "runs-on": HOSTED,
+    "timeout-minutes": "5",
+    "permissions": PERMISSION_MAP[(ENTRY, "comment")],
+    "steps": [
+        {"name": "Checkout", "uses": CHECKOUT, "with": {"persist-credentials": "false"}},
+        {"name": "Set up Python", "uses": SETUP_PYTHON, "with": {"python-version": "3.12"}},
+        {"name": "Download verdict", "uses": DOWNLOAD, "with": {"name": "sim-gate-verdict", "path": "${{ runner.temp }}/verdict"}},
+        {
+            "name": "Upsert",
+            "env": {
+                "GITHUB_TOKEN": "${{ github.token }}",
+                "PR_NUMBER": "${{ needs.validate.outputs.pr_number }}",
+                "STACK": "${{ inputs.stack }}",
+                "GATE_RESULT": "${{ needs.gate.result }}",
+                "RUN_URL": "${{ format('{0}/{1}/actions/runs/{2}/attempts/{3}', github.server_url, github.repository, github.run_id, github.run_attempt) }}",
+            },
+            "run": 'python3 -m core.comment upsert --pr "$PR_NUMBER" --marker "sim-gate:${STACK}" --state "$RUNNER_TEMP/verdict/verdict.json" --run-url "$RUN_URL" --gate-result "$GATE_RESULT"',
+        },
+    ],
+}
+REQUEUE_RUN = """set -eu
+[ "$GITHUB_REF" = "refs/heads/${GITHUB_REF_NAME}" ]
+gh workflow run sim-retest.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f run_id="$GITHUB_RUN_ID"
+"""
+REQUEUE_JOB = {
+    "name": "requeue",
+    "needs": ["validate", "gate"],
+    "if": "${{ always() && needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && needs.gate.outputs.retest_lanes != '' }}",
+    "runs-on": HOSTED,
+    "timeout-minutes": "5",
+    "permissions": PERMISSION_MAP[(ENTRY, "requeue")],
+    "steps": [{"name": "Dispatch the retest stand-in", "env": {"GH_TOKEN": "${{ github.token }}"}, "run": REQUEUE_RUN}],
+}
+RETEST_JOB = {
+    "name": "requeue",
+    "runs-on": HOSTED,
+    "timeout-minutes": "20",
+    "permissions": PERMISSION_MAP[(RETEST, "requeue")],
+    "steps": [
+        {"name": "Checkout", "uses": CHECKOUT, "with": {"persist-credentials": "false"}},
+        {"name": "Set up Python", "uses": SETUP_PYTHON, "with": {"python-version": "3.12"}},
+        {
+            "name": "Retest",
+            "env": {"GITHUB_TOKEN": "${{ github.token }}", "RUN_ID": "${{ inputs.run_id }}"},
+            "run": 'python3 -m core.retest_sim run --run-id "$RUN_ID" --workflow sim-gate.yml',
+        },
+    ],
+}
+RETEST_INPUTS = {"run_id": {"description": "The sim-gate run to consider for a retest", "required": "true", "type": "string"}}
+RETEST_CONCURRENCY = {"group": "${{ format('sim-retest-{0}', inputs.run_id) }}", "cancel-in-progress": "false"}
+ENTRY_JOBS = ["validate", "build", "unit", "integration", "workspace", "gate", "comment", "requeue"]
+
+
+def report_violations(docs):
+    found = []
+    jobs = docs[ENTRY]["jobs"]
+    if list(jobs) != ENTRY_JOBS:
+        found.append(f"{ENTRY}: the jobs are {list(jobs)}, the pinned set and order is {ENTRY_JOBS}")
+    if jobs.get("comment") != COMMENT_JOB:
+        found.append(f"{ENTRY}: the comment job must be exactly the pinned job: after the gate, only with a PR number, one upsert of this run's verdict")
+    if jobs.get("requeue") != REQUEUE_JOB:
+        found.append(f"{ENTRY}: the requeue job must be exactly the pinned job: first attempt of a run that is not a retest, with retest lanes, one stand-in dispatch on this branch")
+    retest = docs[RETEST]
+    if list(retest.get("jobs", {})) != ["requeue"] or retest["jobs"].get("requeue") != RETEST_JOB:
+        found.append(f"{RETEST}: the stand-in must be exactly the one pinned requeue job running core.retest_sim against sim-gate.yml")
+    if retest.get("concurrency") != RETEST_CONCURRENCY:
+        found.append(f"{RETEST}: the stand-in concurrency must be exactly {RETEST_CONCURRENCY}, keyed on run_id")
+    if retest.get("on", {}).get("workflow_dispatch", {}).get("inputs") != RETEST_INPUTS:
+        found.append(f"{RETEST}: the stand-in takes exactly one required input, run_id")
     return found
 
 
@@ -1158,7 +1555,7 @@ def validate_violations(docs):
         "BASE_REF": "${{ inputs.base }}",
         "RETEST_OF": "${{ inputs.retest_of }}",
         "LANES": "${{ inputs.lanes }}",
-        "KNOWN_LANES": " ".join(known_lanes(docs)),
+        "KNOWN_LANES": KNOWN_LANES_EXPR,
         "DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
     }
     resolve = steps[resolves[0]] if resolves else {}
@@ -1170,7 +1567,7 @@ def validate_violations(docs):
     outputs = {name: f"${{{{ steps.resolve.outputs.{name} }}}}" for name in names}
     if validate.get("outputs") != outputs:
         found.append(f"validate must output {', '.join(names)} from the resolve step")
-    for job_id in ("build", *lane_jobs_of(docs)):
+    for job_id in ("build", *lane_jobs_of(docs), "workspace"):
         given = jobs.get(job_id, {}).get("with", {})
         for key, wanted in CALLER_WITH.items():
             if given.get(key) != wanted:
@@ -1184,7 +1581,7 @@ def validate_violations(docs):
         for path, value in walk(job):
             if UNRESOLVED_INPUTS.search(str(value)):
                 found.append(f"{ENTRY}: job {job_id} reads an unresolved PR input at {'.'.join(map(str, path))}; use needs.validate.outputs")
-    return found + entry_contract_violations(docs) + run_name_violations(docs) + lane_set_violations(docs)
+    return found + entry_contract_violations(docs) + run_name_violations(docs) + lane_set_violations(docs) + stack_violations(docs)
 
 
 def permission_violations(docs):
@@ -1204,7 +1601,10 @@ WRITER_TEXT = re.compile(r"sim[-_]cache[-_]write", re.I)
 YAML_ESCAPE = re.compile(r"\\[xuUN]")
 SECRETS_WHOLE = re.compile(r"toJSON\s*\(\s*secrets\s*\)|\bsecrets\s*\[", re.I)
 THIRD_PARTY_MODULES = {"pytest", "pip"}
-EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "core.zero_tests", "adapters.dotnet.affected", "adapters.dotnet.plan"}
+EXPECTED_MODULES = {
+    "core.route", "core.classify", "core.gate", "core.zero_tests", "core.comment", "core.retest_sim",
+    "adapters.dotnet.affected", "adapters.dotnet.plan", "adapters.workspace.affected", "adapters.workspace.plan",
+}
 EXPECTED_SCRIPTS = {
     "core/resolve_refs.sh",
     "core/prejob.sh",
@@ -1212,6 +1612,8 @@ EXPECTED_SCRIPTS = {
     "adapters/dotnet/cache_build.sh",
     "adapters/dotnet/build_artifact.sh",
     "adapters/dotnet/test_lane.sh",
+    "adapters/workspace/cache_npm.sh",
+    "adapters/workspace/test_lane.sh",
 }
 PYTHON_MODULE = re.compile(r"\bpython3?(?:\s+-[A-Za-z]+)*\s+-m\s+([A-Za-z_][\w.]*)")
 PYTHON_FILE = re.compile(r"\bpython3?\s+([^\s\-][^\s;|&)]*\.py)\b")
@@ -1258,14 +1660,17 @@ def all_files_violations(directory):
     return found
 
 
+WRITER_JOBS = {(BUILD, "run"): SAVE_RUN, (WS, "save"): WS_SAVE_RUN}
+
+
 def writer_place_allowed(name, where, doc):
-    if name != BUILD or where[:2] != ("jobs", "run"):
+    if where[:1] != ("jobs",) or len(where) < 3 or (name, where[1]) not in WRITER_JOBS:
         return False
     if where[2:] == ("environment",):
         return True
     if len(where) == 6 and where[2] == "steps" and where[4] == "env" and str(where[5]).startswith(WRITER_PREFIX):
-        step = doc["jobs"]["run"]["steps"][where[3]]
-        return step.get("name") == SAVE_STEP and step.get("run") == SAVE_RUN
+        step = doc["jobs"][where[1]]["steps"][where[3]]
+        return step.get("name") == SAVE_STEP and step.get("run") == WRITER_JOBS[(name, where[1])]
     return False
 
 
@@ -1323,17 +1728,24 @@ def lane_script_violations(root):
 
 def budget_violations(docs):
     found = []
-    total = (
-        minutes(docs, ENTRY, "validate")
-        + sum(minutes(docs, ROUTE, "route") + minutes(docs, name, "run") + minutes(docs, name, "classify") for name in WORK)
-        + minutes(docs, ENTRY, "gate")
-    )
-    if total > BUDGET_MINUTES:
-        found.append(f"worst-case critical path is {total} minutes, budget {BUDGET_MINUTES}")
-    for name in WORK:
-        if minutes(docs, name, "run") > MAX_RUN_MINUTES:
-            found.append(f"{name}: one run may take longer than the per-run cap of {MAX_RUN_MINUTES} minutes")
+    def path(name):
+        return minutes(docs, ROUTE, "route") + minutes(docs, name, "run") + minutes(docs, name, "classify")
+
+    ends = minutes(docs, ENTRY, "validate") + minutes(docs, ENTRY, "gate")
+    for stack, total in (("dotnet", ends + path(BUILD) + path(LANE)), ("workspace", ends + max(path(WS), minutes(docs, WS, "save")))):
+        if total > BUDGET_MINUTES:
+            found.append(f"worst-case critical path of the {stack} stack is {total} minutes, budget {BUDGET_MINUTES}")
+    for name, job in ((BUILD, "run"), (LANE, "run"), (WS, "run"), (WS, "save")):
+        if minutes(docs, name, job) > MAX_RUN_MINUTES:
+            found.append(f"{name}: one {job} job may take longer than the per-run cap of {MAX_RUN_MINUTES} minutes")
     return found
+
+
+STACK_LABEL = re.compile(r"^\s*dotnet\)\s*$")
+
+
+def runs_dotnet(text):
+    return any(DOTNET_WORD.search(line) for line in text.split("\n") if not STACK_LABEL.match(line))
 
 
 def dotnet_setup_violations(docs):
@@ -1341,7 +1753,7 @@ def dotnet_setup_violations(docs):
     for name, doc in docs.items():
         for job_id, job in doc["jobs"].items():
             steps = job.get("steps", [])
-            first_dotnet = next((i for i, st in enumerate(steps) if DOTNET_WORD.search(str(st.get("run", "")))), None)
+            first_dotnet = next((i for i, st in enumerate(steps) if runs_dotnet(str(st.get("run", "")))), None)
             if first_dotnet is None:
                 continue
             setup = next((i for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/setup-dotnet@")), None)
@@ -1358,6 +1770,8 @@ def violations(directory, root=None):
     if set(docs) != SIM_WORKFLOWS:
         return [f"workflow set is {sorted(docs)}, expected {sorted(SIM_WORKFLOWS)}"]
     found += all_files_violations(directory)
+    found += npm_violations(directory)
+    found += ci_violations(directory)
     if root is not None:
         found += invocation_violations(directory, root)
         found += lane_script_violations(root)
@@ -1375,14 +1789,14 @@ def violations(directory, root=None):
         for path, value in walk(doc):
             text = str(value)
             if "permissions" in path and value not in ("read", "none") and not (
-                value == "write" and path[-1] == "id-token" and (name, path[:-1]) in ID_TOKEN_PLACES
+                value == "write" and (name, path) in WRITE_PLACES
             ):
                 found.append(f"{name}: permission {'.'.join(map(str, path))} is {value}")
             if "github.ref_name" in text:
                 found.append(f"{name}: github.ref_name is refused at {'.'.join(map(str, path))}; a tag can carry the branch name, compare github.ref")
             if path[-1:] == ("continue-on-error",) and not (
-                name == BUILD and path[:3] == ("jobs", "run", "steps") and len(path) == 5
-                and doc["jobs"]["run"]["steps"][path[3]].get("name") == JOIN_STEP
+                len(path) == 5 and path[0] == "jobs" and path[2] == "steps" and (name, path[1]) in JOIN_PLACES
+                and doc["jobs"][path[1]]["steps"][path[3]].get("name") == JOIN_STEP
             ):
                 found.append(f"{name}: continue-on-error at {'.'.join(map(str, path))}")
             if path[-1:] == ("secrets",) and value == "inherit":
@@ -1403,6 +1817,7 @@ def violations(directory, root=None):
     found += pinned_step_violations(docs)
     found += cache_wiring_violations(docs)
     found += lane_does_not_build_violations(docs)
+    found += workspace_violations(docs)
     found += fault_violations(docs)
     for name, doc in docs.items():
         writer_refs = {

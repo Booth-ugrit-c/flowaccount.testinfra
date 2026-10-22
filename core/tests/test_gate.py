@@ -84,6 +84,12 @@ def test_a_build_test_failure_retests_nothing():
     assert gate.retest_lanes([("build", "test"), ("unit", ""), ("integration", "")]) == []
 
 
+def test_an_infra_lane_next_to_a_test_lane_retests_nothing():
+    lanes = [("build", "pass"), ("unit", "infra"), ("integration", "test")]
+    assert gate.overall(lanes) == TEST
+    assert gate.retest_lanes(lanes) == []
+
+
 def test_only_the_infra_lane_is_retested_after_a_passing_build():
     assert gate.retest_lanes([("build", "pass"), ("unit", "infra"), ("integration", "pass")]) == ["unit"]
 

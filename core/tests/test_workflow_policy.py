@@ -32,7 +32,7 @@ WITH_REST = (
     "      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n"
 )
 UNIT_GUARD = "    if: ${{ needs.validate.outputs.lane_unit == 'true' && needs.build.outputs.verdict == 'pass' }}\n"
-GATE_NEEDS = "    needs:\n      - validate\n      - build\n      - unit\n      - integration\n"
+GATE_NEEDS = "    needs:\n      - validate\n      - build\n      - unit\n      - integration\n      - workspace\n"
 TRIPWIRE = (
     "      - name: Cache tripwire\n        env:\n          SIM_TAILNET_JOIN: ${{ steps.join.outcome }}\n"
     "          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n"
@@ -51,6 +51,7 @@ FULL = (
     " && inputs.sim_fault == '' && runner.environment == 'github-hosted' && '1' || '0' }}\n"
 )
 SIM_FAULT = "      sim_fault: ${{ inputs.fault != 'none' && inputs.fault || '' }}\n"
+KNOWN_LANES = "          KNOWN_LANES: ${{ inputs.stack == 'workspace' && 'unit' || 'unit integration' }}\n"
 READER = "          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n"
 WRITER = "          SIM_CACHE_WRITE_KEY_ID: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}\n"
 ENDPOINT = "          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n"
@@ -65,14 +66,14 @@ def test_the_shipped_workflows_satisfy_the_policy():
 MUTATIONS = {
     "token on a step of a work job": (
         BUILD,
-        "      - name: Health\n        run: |",
-        "      - name: Health\n        env:\n          SIM_ROUTE_TOKEN: ${{ secrets.SIM_ROUTE_TOKEN }}\n        run: |",
+        "      - name: Health\n        env:\n",
+        "      - name: Health\n        env:\n          SIM_ROUTE_TOKEN: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
         "referenced outside the route job",
     ),
     "token passed to the called route workflow": (
         BUILD,
-        "      runner_label: ${{ inputs.runner_label }}\n",
-        "      runner_label: ${{ inputs.runner_label }}\n      token: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n      token: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
         "referenced outside the route job",
     ),
     "token in a second step of the route job": (
@@ -156,7 +157,7 @@ MUTATIONS = {
     ),
     "route call with another label": (
         BUILD,
-        "      runner_label: ${{ inputs.runner_label }}\n",
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
         "      runner_label: ${{ inputs.pr_branch }}\n",
         "the route job must call tpl-route.yml",
     ),
@@ -290,7 +291,7 @@ MUTATIONS = {
         "          HEAD_SHA: ${{ inputs.pr_branch }}\n",
         "must use the checked-out head",
     ),
-    "continue-on-error on a job": (TOP, "    timeout-minutes: 5\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "    timeout-minutes: 5\n    continue-on-error: true\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "continue-on-error at jobs.gate"),
+    "continue-on-error on a job": (TOP, "    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n    continue-on-error: true\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "continue-on-error at jobs.gate"),
     "secrets inherit": (TOP, "    uses: ./.github/workflows/tpl-dotnet-build.yml", "    secrets: inherit\n    uses: ./.github/workflows/tpl-dotnet-build.yml", "secrets: inherit"),
     "write permission": (TOP, "      checks: read\n      id-token: write\n", "      checks: write\n      id-token: write\n", "permission jobs.build.permissions.checks is write"),
     "workflow permissions widened": (BUILD, "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: write\n\njobs:", "workflow permissions must be contents: read only"),
@@ -360,8 +361,9 @@ MUTATIONS = {
     "gate taking the executed count of another lane": (TOP, '--executed "unit=${UNIT_EXECUTED}"', '--executed "unit=${INTEGRATION_EXECUTED}"', DECIDE_PIN),
     "gate env with an extra variable": (TOP, "          STACK: ${{ inputs.stack }}\n", "          STACK: ${{ inputs.stack }}\n          BASH_ENV: /tmp/x\n", DECIDE_PIN),
     "gate reading the build verdict from elsewhere": (TOP, "          BUILD_VERDICT: ${{ needs.build.outputs.verdict }}\n", "          BUILD_VERDICT: pass\n", DECIDE_PIN),
-    "gate not waiting for validate": (TOP, GATE_NEEDS, GATE_NEEDS.replace("      - validate\n", ""), "the gate must need validate, build and every lane"),
-    "gate not waiting for the build": (TOP, GATE_NEEDS, GATE_NEEDS.replace("      - build\n", ""), "the gate must need validate, build and every lane"),
+    "gate not waiting for validate": (TOP, GATE_NEEDS, GATE_NEEDS.replace("      - validate\n", ""), "the gate must need validate, build, every lane and workspace"),
+    "gate not waiting for the build": (TOP, GATE_NEEDS, GATE_NEEDS.replace("      - build\n", ""), "the gate must need validate, build, every lane and workspace"),
+    "gate not waiting for the workspace lane": (TOP, GATE_NEEDS, GATE_NEEDS.replace("      - workspace\n", ""), "the gate must need validate, build, every lane and workspace"),
     "the verdict artifact under another name": (TOP, "          name: sim-gate-verdict\n", "          name: verdict\n", "the pinned Upload verdict"),
     "the verdict upload only on success": (TOP, "      - name: Upload verdict\n        if: ${{ always() }}\n", "      - name: Upload verdict\n", "the pinned Upload verdict"),
     "a lane job without the validate selection guard": (
@@ -389,7 +391,9 @@ MUTATIONS = {
         "      artifact: dotnet-build-1\n",
         "must take artifact from needs.build.outputs.artifact",
     ),
-    "a lane job the validate lane list does not know": (TOP, "          KNOWN_LANES: unit integration\n", "          KNOWN_LANES: unit\n", "the lane names differ"),
+    "a lane job the validate lane list does not know": (TOP, KNOWN_LANES, KNOWN_LANES.replace("'unit integration'", "'unit'"), "the lane names differ"),
+    "the workspace stack knowing a dotnet lane": (TOP, KNOWN_LANES, KNOWN_LANES.replace("&& 'unit' ||", "&& 'unit integration' ||"), "for stack workspace"),
+    "validate knowing lanes without the stack": (TOP, KNOWN_LANES, "          KNOWN_LANES: unit integration\n", "validate must resolve every PR input"),
     "a validate lane output with no lane job": (
         TOP,
         "      lane_integration: ${{ steps.resolve.outputs.lane_integration }}\n",
@@ -469,10 +473,10 @@ MUTATIONS = {
         "on:\n  workflow_run:\n    workflows: [sim-gate]\n  workflow_dispatch:",
         "sim-retest.yml: forbidden trigger workflow_run",
     ),
-    "the retest stand-in stub asking for actions write": (
+    "the retest stand-in with read-only actions": (
         RETEST,
-        "    timeout-minutes: 1\n",
-        "    timeout-minutes: 1\n    permissions:\n      contents: read\n      actions: read\n",
+        "      contents: read\n      actions: write\n",
+        "      contents: read\n      actions: read\n",
         "sim-retest.yml: job requeue permissions are",
     ),
     "the gate job given actions read": (
@@ -539,8 +543,8 @@ MUTATIONS = {
     "an endpoint in the Build step env": (BUILD, BUILD_STEP, BUILD_STEP + ENDPOINT, "secret SIM_CACHE_ENDPOINT_LAB is read at a place that is not allowed"),
     "a reader key in the Health step": (
         BUILD,
-        "      - name: Health\n        run: |",
-        "      - name: Health\n        env:\n" + READER + "        run: |",
+        "      - name: Health\n        env:\n",
+        "      - name: Health\n        env:\n" + READER,
         "secret SIM_CACHE_READ_KEY_ID is read at a place that is not allowed",
     ),
     "a writer key in the restore step": (
@@ -945,6 +949,153 @@ MUTATIONS = {
         "    name: build\n    needs:\n      - validate\n      - gate\n",
         "the build job must need validate",
     ),
+    "the comment job without pull-requests write": (
+        TOP,
+        "      actions: read\n      pull-requests: write\n",
+        "      actions: read\n",
+        "sim-gate.yml: job comment permissions are",
+    ),
+    "the comment job with contents write": (
+        TOP,
+        "    permissions:\n      contents: read\n      actions: read\n      pull-requests: write\n",
+        "    permissions:\n      contents: write\n      actions: read\n      pull-requests: write\n",
+        "permission jobs.comment.permissions.contents is write",
+    ),
+    "the requeue job with read-only actions": (TOP, "      contents: read\n      actions: write\n", "      contents: read\n      actions: read\n", "sim-gate.yml: job requeue permissions are"),
+    "pull-requests write on the gate job": (
+        TOP,
+        "    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n",
+        "    permissions:\n      contents: read\n      pull-requests: write\n    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n",
+        "permission jobs.gate.permissions.pull-requests is write",
+    ),
+    "the comment job on a run without a PR number": (
+        TOP,
+        "    if: ${{ always() && needs.validate.outputs.pr_number != '' }}\n",
+        "    if: ${{ always() }}\n",
+        "the comment job must be exactly the pinned job",
+    ),
+    "the comment job upserting another file": (
+        TOP,
+        '--state "$RUNNER_TEMP/verdict/verdict.json"',
+        '--state "$GITHUB_WORKSPACE/verdict.json"',
+        "the comment job must be exactly the pinned job",
+    ),
+    "the comment job downloading another run's verdict": (
+        TOP,
+        "          name: sim-gate-verdict\n          path: ${{ runner.temp }}/verdict\n",
+        '          name: sim-gate-verdict\n          path: ${{ runner.temp }}/verdict\n          run-id: "1"\n',
+        "the comment job must be exactly the pinned job",
+    ),
+    "the comment job told the gate passed": (
+        TOP,
+        "          GATE_RESULT: ${{ needs.gate.result }}\n",
+        "          GATE_RESULT: success\n",
+        "the comment job must be exactly the pinned job",
+    ),
+    "the requeue job on a retest run": (
+        TOP,
+        "needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && ",
+        "github.run_attempt == '1' && ",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job on a re-run attempt": (
+        TOP,
+        "needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && ",
+        "needs.validate.outputs.retest_of == '' && ",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job without retest lanes": (
+        TOP,
+        " && needs.gate.outputs.retest_lanes != '' }}\n",
+        " }}\n",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job dispatching on the default branch": (
+        TOP,
+        '--ref "$GITHUB_REF_NAME" -f run_id="$GITHUB_RUN_ID"',
+        '--ref main -f run_id="$GITHUB_RUN_ID"',
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job without the branch check": (
+        TOP,
+        '          [ "$GITHUB_REF" = "refs/heads/${GITHUB_REF_NAME}" ]\n',
+        "",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "an extra job in the entry": (
+        TOP,
+        "\n  requeue:\n    name: requeue\n",
+        "\n  extra:\n    name: extra\n    runs-on: ubuntu-24.04\n    timeout-minutes: 1\n    steps:\n      - name: Echo\n        run: echo x\n\n  requeue:\n    name: requeue\n",
+        "the pinned set and order is",
+    ),
+    "the stand-in retesting another workflow": (
+        RETEST,
+        "--workflow sim-gate.yml",
+        "--workflow sim-retest.yml",
+        "the stand-in must be exactly the one pinned requeue job",
+    ),
+    "the stand-in waiting longer than its job": (
+        RETEST,
+        '--run-id "$RUN_ID" --workflow sim-gate.yml',
+        '--run-id "$RUN_ID" --workflow sim-gate.yml --wait 3600',
+        "the stand-in must be exactly the one pinned requeue job",
+    ),
+    "the stand-in without concurrency": (
+        RETEST,
+        "concurrency:\n  group: ${{ format('sim-retest-{0}', inputs.run_id) }}\n  cancel-in-progress: false\n",
+        "",
+        "the stand-in concurrency must be exactly",
+    ),
+    "the stand-in concurrency keyed on its own run": (
+        RETEST,
+        "  group: ${{ format('sim-retest-{0}', inputs.run_id) }}\n",
+        "  group: ${{ format('sim-retest-{0}', github.run_id) }}\n",
+        "the stand-in concurrency must be exactly",
+    ),
+    "the stand-in with a second input": (
+        RETEST,
+        "        required: true\n        type: string\n",
+        "        required: true\n        type: string\n      lanes:\n        required: false\n        type: string\n",
+        "the stand-in takes exactly one required input",
+    ),
+    "the gate retest lanes hardcoded": (
+        TOP,
+        "      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n",
+        "      retest_lanes: unit\n",
+        "the gate job outputs must be exactly retest_lanes",
+    ),
+    "the Decide step without its id": (TOP, "      - name: Decide\n        id: decide\n", "      - name: Decide\n", DECIDE_PIN),
+    "the Health step failing on every fault": (
+        BUILD,
+        "          FAIL_HEALTH: ${{ inputs.sim_fault == 'fail_health_twice' || inputs.sim_fault == 'fail_health_once' && inputs.retest != true }}\n",
+        "          FAIL_HEALTH: ${{ inputs.sim_fault != '' }}\n",
+        "the Health step fails=True for fault 'fail_test'",
+    ),
+    "the Health step failing once even on the retest": (
+        BUILD,
+        " || inputs.sim_fault == 'fail_health_once' && inputs.retest != true }}\n",
+        " || inputs.sim_fault == 'fail_health_once' }}\n",
+        "the Health step fails=True for fault 'fail_health_once' with retest True",
+    ),
+    "the Health step ignoring the fault": (
+        BUILD,
+        '          if [ "$FAIL_HEALTH" = true ]; then\n',
+        '          if [ "$FAIL_HEALTH" = never ]; then\n',
+        "the Health step must be exactly the pinned step",
+    ),
+    "the build routed to the lab on a retest": (
+        BUILD,
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
+        "      runner_label: ${{ inputs.runner_label }}\n",
+        "a retest always runs on the cloud",
+    ),
+    "the lane routed to the lab on a retest": (
+        LANE,
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
+        "      runner_label: ${{ inputs.runner_label }}\n",
+        "a retest always runs on the cloud",
+    ),
+    "the fail_health_twice fault option dropped": (TOP, "          - fail_health_twice\n", "", "fault options are"),
 }
 
 
@@ -1129,9 +1280,10 @@ def test_ci_shellchecks_the_hook_and_every_sim_gate_script():
     runs = [str(step.get("run", "")).split() for step in jobs["workflow-lint"]["steps"]]
     shellcheck = [words for words in runs if words[:1] == ["shellcheck"]]
     assert len(shellcheck) == 1, runs
-    assert {".githooks/pre-push", "core/*.sh", "adapters/dotnet/*.sh"} <= set(shellcheck[0][1:])
+    assert {".githooks/pre-push", "core/*.sh", "adapters/*/*.sh"} <= set(shellcheck[0][1:])
     assert {path.name for path in (WORKFLOWS.parents[1] / "core").glob("*.sh")} >= {"kill_own_runner.sh", "prejob.sh", "resolve_refs.sh"}
     assert {path.name for path in (WORKFLOWS.parents[1] / "adapters" / "dotnet").glob("*.sh")} >= {"cache_build.sh", "build_artifact.sh", "test_lane.sh"}
+    assert {path.name for path in (WORKFLOWS.parents[1] / "adapters" / "workspace").glob("*.sh")} >= {"cache_npm.sh", "test_lane.sh"}
 
 
 CI_STEP = "      - name: Run tests\n        run: python -m pytest\n"
@@ -1217,7 +1369,6 @@ def test_every_shipped_invocation_resolves_and_the_scan_sees_the_known_ones():
         ("trial-gate.yml", "python3 -m workload run", "python3 workload/missing.py run", "workload/missing.py does not resolve"),
         (TOP, "    uses: ./.github/workflows/tpl-dotnet-build.yml", "    uses: ./.github/workflows/tpl-dotnet-builds.yml", "uses ./.github/workflows/tpl-dotnet-builds.yml, which does not exist"),
         (ROUTE, "python3 -m core.route", "python3 -c 'import core.route'", "no workflow runs python -m core.route"),
-        (LANE, "python3 -m core.zero_tests", "python3 -c 'import core.zero_tests'", "no workflow runs python -m core.zero_tests"),
         (LANE, "sh adapters/dotnet/test_lane.sh", "cat adapters/dotnet/test_lane.sh", "no workflow runs adapters/dotnet/test_lane.sh"),
         (TOP, "        run: sh core/resolve_refs.sh\n", "        run: cat core/resolve_refs.sh\n", "no workflow runs core/resolve_refs.sh"),
         (ROUTE, "python3 -m core.route", "python3 -I -m core.nothere", "python -m core.nothere does not resolve"),
@@ -1239,3 +1390,115 @@ def test_the_lane_test_runner_must_pass_no_build(tmp_path):
     assert policy.lane_script_violations(tmp_path) == []
     script.write_text(text.replace(" --no-build", ""), encoding="utf-8")
     assert any("must pass --no-build" in line for line in policy.lane_script_violations(tmp_path))
+
+
+WS = "tpl-workspace-unit.yml"
+WS_AFFECTED = '        run: python3 -m adapters.workspace.affected --base "$BASE_SHA" --head "$HEAD_SHA" --root "$SIM_ROOT" > "$RUNNER_TEMP/affected.json"\n'
+WS_CLASSIFY = '--infra-step "Set up Node" --done-marker test-end'
+WS_CALLER = "    uses: ./.github/workflows/tpl-workspace-unit.yml # zizmor: ignore[self-repository]\n"
+WS_CALLER_PERMISSIONS = "      checks: read\n      id-token: write\n" + WS_CALLER
+WS_SAVE_TOP = "    name: save workspace-unit\n    if: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sim_fault == '' }}\n"
+WS_INSTALL = '          npm ci --cache "$RUNNER_TEMP/npm-cache" --prefer-offline --ignore-scripts --no-audit --no-fund\n'
+WS_RESTORE = '        run: sh adapters/workspace/cache_npm.sh restore "$RUNNER_TEMP/npm-cache"\n'
+WS_SAVE_RUN = '        run: sh adapters/workspace/cache_npm.sh save "$RUNNER_TEMP/npm-cache"\n'
+WS_GUARD = "    if: ${{ inputs.stack == 'workspace' && needs.validate.outputs.lane_unit == 'true' }}\n"
+WS_RUN_ENV = "    environment: ${{ needs.route.outputs.target == 'onprem' && inputs.runner_label != '' && 'sim-cache-lab' || 'sim-cache-read' }}\n"
+WS_DECIDE = '                      true) set -- --lane "unit=${WORKSPACE_VERDICT}" --reason "unit=${WORKSPACE_REASON}" --executed "unit=${WORKSPACE_EXECUTED}" ;;\n'
+CI_AUDIT = "        run: npm audit --audit-level=high --package-lock-only\n"
+
+WORKSPACE_MUTATIONS = {
+    "Affected softened with || true": (WS, WS_AFFECTED, WS_AFFECTED.replace('affected.json"\n', 'affected.json" || true\n'), "must not soften its exit"),
+    "Affected softened with a following command": (WS, WS_AFFECTED, WS_AFFECTED.replace('affected.json"\n', 'affected.json"; true\n'), "must not soften its exit"),
+    "Affected with continue-on-error": (
+        WS,
+        "      - name: Affected\n        env:\n",
+        "      - name: Affected\n        continue-on-error: true\n        env:\n",
+        "the Affected step must have no continue-on-error",
+    ),
+    "Affected as an infra step": (WS, WS_CLASSIFY, '--infra-step "Set up Node" --infra-step "Affected" --done-marker test-end', "classify names infra steps"),
+    "Install as an infra step": (WS, WS_CLASSIFY, '--infra-step "Set up Node" --infra-step "Install" --done-marker test-end', "classify names infra steps"),
+    "the Set up Node infra step dropped": (WS, WS_CLASSIFY, "--done-marker test-end", "classify names infra steps"),
+    "the run job with a step dropped": (WS, "      - name: Zero tests\n        id: zero\n", "      - name: Zero tests skipped\n        id: zero\n", "the run job must be exactly the pinned job"),
+    "the run job with a changed lane call": (WS, "sh adapters/workspace/test_lane.sh", "sh adapters/workspace/test_lane.sh --no-fail", "the run job must be exactly the pinned job"),
+    "the run job reading the writer key": (
+        WS,
+        WS_RESTORE,
+        WS_RESTORE.replace("        run:", "          SIM_CACHE_WRITE_KEY_ID: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}\n        run:"),
+        "job run holds the cache writer key; only the save job may",
+    ),
+    "the run job in the writer environment": (WS, WS_RUN_ENV, WS_RUN_ENV.replace("'sim-cache-read'", "'sim-cache-write'"), "the run job never holds the writer key"),
+    "the save job running the test lane": (
+        WS,
+        WS_SAVE_RUN,
+        WS_SAVE_RUN.replace("        run: sh", '        run: sh adapters/workspace/test_lane.sh "$RUNNER_TEMP/unit.txt" "$RUNNER_TEMP/counts" 0 && sh'),
+        "runs workspace code in step Save cache",
+    ),
+    "the save job running nx": (WS, WS_INSTALL + "      - name: Save cache\n", WS_INSTALL + "          npx nx graph\n      - name: Save cache\n", "runs workspace code in step Install"),
+    "the save job off the default branch": (WS, WS_SAVE_TOP, WS_SAVE_TOP.replace("github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && ", ""), "the save job must run only on the default-branch tip"),
+    "the save job with a fault": (WS, WS_SAVE_TOP, WS_SAVE_TOP.replace(" && inputs.sim_fault == ''", ""), "the save job must run only on the default-branch tip"),
+    "the save job on the lab label": (
+        WS,
+        "    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n",
+        "    runs-on: ${{ inputs.runner_label }}\n    timeout-minutes: 15\n",
+        "the save job must run on ubuntu-24.04 in sim-cache-write",
+    ),
+    "npm ci without --ignore-scripts in the lane": (WS, WS_INSTALL, WS_INSTALL.replace(" --ignore-scripts", ""), "npm installs without --ignore-scripts"),
+    "npm install in ci": ("ci.yml", "        run: npm ci --ignore-scripts --no-audit --no-fund\n", "        run: npm install\n", "ci.yml: npm installs without --ignore-scripts"),
+    "ci without the audit": ("ci.yml", CI_AUDIT, "", "ci.yml: the workspace job must end with"),
+    "ci audit below high": ("ci.yml", CI_AUDIT, CI_AUDIT.replace("high", "critical"), "ci.yml: the workspace job must end with"),
+    "ci tests from the nx cache": ("ci.yml", " --skip-nx-cache --outputStyle=static\n", " --outputStyle=static\n", "ci.yml: the workspace job must end with"),
+    "ci audit that cannot fail": ("ci.yml", CI_AUDIT, CI_AUDIT + "        continue-on-error: true\n", "ci.yml: the workspace job must have no continue-on-error"),
+    "ci shellcheck missing the workspace scripts": ("ci.yml", "core/*.sh adapters/*/*.sh", "core/*.sh adapters/dotnet/*.sh", "shellcheck must cover adapters/*/*.sh"),
+    "the hygiene survivors of dotnet in the workspace lane": (WS, "          SIM_SURVIVORS: node\n", "          SIM_SURVIVORS: dotnet testhost vstest.console VBCSCompiler\n", "SIM_SURVIVORS: node"),
+    "the workspace job without the stack guard": (TOP, WS_GUARD, "    if: ${{ needs.validate.outputs.lane_unit == 'true' }}\n", "the workspace stack's selected unit lane only"),
+    "the workspace job without the lane guard": (TOP, WS_GUARD, "    if: ${{ inputs.stack == 'workspace' }}\n", "the workspace stack's selected unit lane only"),
+    "the build job for every stack": (TOP, "    needs: validate\n    if: ${{ inputs.stack == 'dotnet' }}\n", "    needs: validate\n", "it must run for the dotnet stack only"),
+    "the workspace job on the unit label": (TOP, "      runner_label: ${{ vars.SIM_LAB_LABEL_WORKSPACE }}\n", "      runner_label: ${{ vars.SIM_LAB_LABEL_UNIT }}\n", "job workspace must use its own variable"),
+    "the workspace verdict from the dotnet lane": (TOP, WS_DECIDE, WS_DECIDE.replace("${WORKSPACE_VERDICT}", "${UNIT_VERDICT}"), DECIDE_PIN),
+    "the workspace stack dropped": (TOP, "          - workspace\n      lanes:", "      lanes:", "the entry contract says"),
+    "the workspace caller without id-token": (TOP, WS_CALLER_PERMISSIONS, "      checks: read\n" + WS_CALLER, "job workspace permissions are"),
+    "the workspace caller with actions write": (TOP, "      actions: read\n" + WS_CALLER_PERMISSIONS, "      actions: write\n" + WS_CALLER_PERMISSIONS, "job workspace permissions are"),
+    "the workspace classify with id-token": (
+        WS,
+        "    timeout-minutes: 5\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n",
+        "    timeout-minutes: 5\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n      id-token: write\n",
+        "job classify permissions are",
+    ),
+    "the workspace save with pull-requests write": (
+        WS,
+        "    environment: sim-cache-write\n    permissions:\n      contents: read\n      id-token: write\n",
+        "    environment: sim-cache-write\n    permissions:\n      contents: read\n      id-token: write\n      pull-requests: write\n",
+        "job save permissions are",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(WORKSPACE_MUTATIONS))
+def test_a_mutated_workspace_wiring_is_refused(copy, name):
+    filename, old, new, expected = WORKSPACE_MUTATIONS[name]
+    mutate(copy, filename, old, new)
+    found = policy.violations(copy)
+    assert any(expected in line for line in found), found
+
+
+def test_the_workspace_template_is_required(copy):
+    (copy / WS).unlink()
+    assert any("workflow set is" in line for line in policy.violations(copy))
+
+
+def test_no_workflow_running_the_guard_is_seen_by_the_invocation_scan(copy):
+    for filename in (LANE, WS):
+        mutate(copy, filename, "python3 -m core.zero_tests", "python3 -c 'import core.zero_tests'")
+    found = policy.invocation_violations(copy, ROOT)
+    assert any("no workflow runs python -m core.zero_tests" in line for line in found), found
+
+
+@pytest.mark.parametrize("old, new, expected", [
+    ("sh adapters/workspace/test_lane.sh", "cat adapters/workspace/test_lane.sh", "no workflow runs adapters/workspace/test_lane.sh"),
+    (WS_RESTORE, WS_RESTORE.replace("cache_npm.sh", "cache_npmx.sh"), "adapters/workspace/cache_npmx.sh does not resolve"),
+    ("python3 -m adapters.workspace.plan --affected", "python3 -m adapters.workspace.plans --affected", "python -m adapters.workspace.plans does not resolve"),
+])
+def test_a_workspace_invocation_that_does_not_resolve_is_refused(copy, old, new, expected):
+    mutate(copy, WS, old, new)
+    found = policy.invocation_violations(copy, ROOT)
+    assert any(expected in line for line in found), found

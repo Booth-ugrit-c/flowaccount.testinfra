@@ -11,11 +11,12 @@ from adapters.workspace import affected
 LANES = ("unit",)
 
 
-def load(selection) -> tuple:
+def load(selection, every=False) -> tuple:
     projects = selection["projects"]
-    tests = [str(path) for path in selection["test"]]
     if not isinstance(projects, dict):
         raise affected.GraphError("projects is not an object")
+    chosen = [label for label, entry in projects.items() if entry["test"] is True] if every else selection["test"]
+    tests = [str(path) for path in chosen]
     if not tests:
         raise affected.GraphError("the selection has no test project; an empty run would pass with zero tests")
     graph = {}
@@ -49,6 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--lane", required=True, choices=LANES)
     parser.add_argument("--emit", required=True, choices=("build", "test"))
     parser.add_argument("--names", action="store_true", help="print Nx project names instead of project roots")
+    parser.add_argument("--all", action="store_true", help="plan every test project in the selection's graph")
     return parser
 
 
@@ -56,7 +58,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     try:
         selection = json.loads(Path(args.affected).read_text(encoding="utf-8"))
-        graph, tests, names = load(selection)
+        graph, tests, names = load(selection, args.all)
         result = build_plan(graph, tests) if args.emit == "build" else tests
         if args.names:
             result = [names[path] for path in result]

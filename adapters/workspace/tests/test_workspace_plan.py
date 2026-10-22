@@ -53,6 +53,19 @@ def test_fallback_selection_plans_every_test_project(tmp_path, capsys):
     assert code == 0 and set(out) == {SHARED, ALPHA, BETA, GAMMA, SOLO}
 
 
+def test_all_plans_every_test_project_whatever_the_selection(tmp_path, capsys):
+    code, out, _ = run(tmp_path, capsys, selection([f"{SOLO}/index.js"]), "--emit", "test", "--all", "--names")
+    assert code == 0 and out == ["shared", "alpha", "beta", "gamma", "solo"]
+
+
+def test_all_still_refuses_a_selection_with_no_test_project(tmp_path, capsys):
+    document = selection([f"{ALPHA}/index.js"])
+    for entry in document["projects"].values():
+        entry["test"] = False
+    code, out, err = run(tmp_path, capsys, document, "--emit", "test", "--all")
+    assert code == 2 and out == [] and "zero tests" in err
+
+
 @pytest.mark.parametrize("break_it, message", [
     (lambda d: d.update(test=[]), "zero tests"),
     (lambda d: d.update(test=["sim/workspace/libs/ghost"]), "is not a project in the selection"),
