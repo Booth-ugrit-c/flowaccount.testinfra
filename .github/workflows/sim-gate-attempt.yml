@@ -13,11 +13,21 @@ on:
         required: true
         type: string
       head:
+        description: Commit SHA resolved by validate
         required: true
         type: string
+      default_tip:
+        description: True only when validate resolved head to the default branch tip on a dispatch from the default branch
+        required: false
+        default: false
+        type: boolean
       runner:
         required: true
         type: string
+      hosted:
+        description: True when the runner is a fresh GitHub-hosted VM
+        required: true
+        type: boolean
       fail_test:
         required: false
         default: false
@@ -42,6 +52,10 @@ jobs:
     name: run ${{ inputs.tag }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 25
+    environment: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,31 +123,66 @@ jobs:
           BASE_REF: ${{ inputs.base }}
           HEAD_REF: ${{ inputs.head }}
         run: python3 -m tools.sim_gate.affected --base "$BASE_REF" --head "$HEAD_REF" > "$RUNNER_TEMP/affected.json"
-      - name: Build
-        working-directory: sim/dotnet
+      - name: Plan
         env:
           LANE: ${{ inputs.lane }}
+          FULL: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && runner.environment == 'github-hosted' && '1' || '0' }}
+        run: |
+          set -eu
+          if [ "$FULL" = 1 ]; then
+              set -- --all
+          else
+              set -- --affected "$RUNNER_TEMP/affected.json"
+          fi
+          python3 -m tools.sim_gate.plan "$@" --lane "$LANE" --emit build > "$RUNNER_TEMP/build.txt"
+          python3 -m tools.sim_gate.plan "$@" --lane "$LANE" --emit test > "$RUNNER_TEMP/test.txt"
+      - name: Join the tailnet
+        id: join
+        if: ${{ runner.environment == 'github-hosted' }}
+        continue-on-error: true
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.SIM_TAILNET_CLIENT_ID }}
+          audience: ${{ secrets.SIM_TAILNET_AUDIENCE }}
+          tags: tag:ci-sim
+          args: --accept-routes=false
+          use-cache: "false"
+      - name: Cache tripwire
+        env:
+          SIM_TAILNET_JOIN: ${{ steps.join.outcome }}
+          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}
+          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
+          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}
+          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}
+        run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"
+      - name: Build
+        env:
+          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}
+          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}
+          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
+          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}
+          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}
           DOTNET_CLI_TELEMETRY_OPTOUT: "1"
           DOTNET_NOLOGO: "1"
           MSBUILDDISABLENODEREUSE: "1"
           DOTNET_CLI_USE_MSBUILD_SERVER: "0"
         run: |
           set -eu
-          python3 -c 'import json, sys; sys.stdout.buffer.write(("\n".join(json.load(open(sys.argv[1]))[sys.argv[2]]) + "\n").encode())' \
-              "$RUNNER_TEMP/affected.json" build > "$RUNNER_TEMP/build.txt"
-          while IFS= read -r project; do
-              [ -n "$project" ] || continue
-              case "$project" in
-                  *IntegrationTests*) [ "$LANE" = integration ] || continue ;;
-              esac
-              dotnet build "$GITHUB_WORKSPACE/$project" -c Release --disable-build-servers -p:IncludeSourceRevisionInInformationalVersion=false
-          done < "$RUNNER_TEMP/build.txt"
+          if [ "$FAIL_TEST" = 1 ]; then
+              SIM_CACHE_MODE=off
+              export SIM_CACHE_MODE
+              project=$(head -n 1 "$RUNNER_TEMP/test.txt")
+              if [ -n "$project" ]; then
+                  printf '%s\n' 'using Xunit;' 'public class ForcedFailure' '{' '    [Fact]' \
+                      '    public void Asserts_the_wrong_value() => Assert.Equal(2, 1);' '}' > "$(dirname "$GITHUB_WORKSPACE/$project")/ForcedFailure.cs"
+              fi
+          fi
+          sh tools/sim_gate/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"
           touch "$MARKERS/build"
       - name: Test
         working-directory: sim/dotnet
         env:
           LANE: ${{ inputs.lane }}
-          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}
           KILL_RUNNER: ${{ inputs.kill_runner }}
           DOTNET_CLI_TELEMETRY_OPTOUT: "1"
           DOTNET_NOLOGO: "1"
@@ -146,29 +195,26 @@ jobs:
               sh "$GITHUB_WORKSPACE/tools/sim_gate/kill_own_runner.sh" || exit 1
               sleep 600
           fi
-          python3 -c 'import json, sys; sys.stdout.buffer.write(("\n".join(json.load(open(sys.argv[1]))[sys.argv[2]]) + "\n").encode())' \
-              "$RUNNER_TEMP/affected.json" test > "$RUNNER_TEMP/test.txt"
           status=0
-          injected=0
           case "$LANE" in
               integration) filter="Category=integration" ;;
               *) filter="Category!=integration" ;;
           esac
           while IFS= read -r project; do
               [ -n "$project" ] || continue
-              case "$project" in
-                  *IntegrationTests*) [ "$LANE" = integration ] || continue ;;
-                  *) [ "$LANE" = unit ] || continue ;;
-              esac
-              if [ "$FAIL_TEST" = 1 ] && [ "$injected" = 0 ]; then
-                  printf '%s\n' 'using Xunit;' 'public class ForcedFailure' '{' '    [Fact]' \
-                      '    public void Asserts_the_wrong_value() => Assert.Equal(2, 1);' '}' > "$(dirname "$GITHUB_WORKSPACE/$project")/ForcedFailure.cs"
-                  injected=1
-              fi
-              dotnet test "$GITHUB_WORKSPACE/$project" -c Release --filter "$filter" --disable-build-servers -p:IncludeSourceRevisionInInformationalVersion=false || status=1
+              dotnet test "$GITHUB_WORKSPACE/$project" -c Release --no-build --filter "$filter" --disable-build-servers || status=1
           done < "$RUNNER_TEMP/test.txt"
           touch "$MARKERS/test-end"
           exit "$status"
+      - name: Save cache
+        if: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && runner.environment == 'github-hosted' }}
+        env:
+          SIM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}
+          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
+          SIM_CACHE_WRITE_KEY_ID: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}
+          SIM_CACHE_WRITE_SECRET: ${{ secrets.SIM_CACHE_WRITE_SECRET }}
+        run: sh tools/sim_gate/cache_build.sh save "$RUNNER_TEMP/built.txt"
       - name: Remove services
         if: ${{ always() && inputs.lane == 'integration' }}
         env:

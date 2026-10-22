@@ -47,7 +47,9 @@ fi
 
 dirs=$(find "$workspace" \( -name .git -o -name node_modules \) -prune -o -type d \( -name bin -o -name obj \) -print)
 printf '%s\n' "$dirs" | while IFS= read -r dir; do
-    [ -n "$dir" ] && [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    if [ -z "$dir" ] || [ ! -d "$dir" ] || [ -L "$dir" ]; then
+        continue
+    fi
     case $dir in "$workspace"/*) ;; *) continue ;; esac
     parent=$(dirname "$dir")
     owned=

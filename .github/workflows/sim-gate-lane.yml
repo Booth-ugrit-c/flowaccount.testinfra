@@ -12,6 +12,11 @@ on:
       head:
         required: true
         type: string
+      default_tip:
+        description: True only when validate resolved head to the default branch tip on a dispatch from the default branch
+        required: false
+        default: false
+        type: boolean
       fail_test:
         required: false
         default: false
@@ -80,13 +85,16 @@ jobs:
       contents: read
       actions: read
       checks: read
+      id-token: write
     uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]
     with:
       tag: ${{ inputs.lane }}-attempt
       lane: ${{ inputs.lane }}
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
+      default_tip: ${{ inputs.default_tip }}
       runner: ${{ needs.route.outputs.target == 'onprem' && inputs.lab_label || 'ubuntu-24.04' }}
+      hosted: ${{ needs.route.outputs.target != 'onprem' || inputs.lab_label == '' }}
       fail_test: ${{ inputs.fail_test }}
       kill_runner: ${{ inputs.simulate_kill == 'both' || inputs.simulate_kill == 'onprem' && needs.route.outputs.target == 'onprem' }}
 
@@ -100,12 +108,15 @@ jobs:
       contents: read
       actions: read
       checks: read
+      id-token: write
     uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]
     with:
       tag: ${{ inputs.lane }}-retry
       lane: ${{ inputs.lane }}
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
+      default_tip: ${{ inputs.default_tip }}
       runner: ubuntu-24.04
+      hosted: true
       fail_test: ${{ inputs.fail_test }}
       kill_runner: ${{ inputs.simulate_kill == 'both' }}

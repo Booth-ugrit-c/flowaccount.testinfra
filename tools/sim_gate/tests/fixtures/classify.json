@@ -1131,6 +1131,165 @@
   "log": null,
   "markers": null
  },
+ "tailnet_join_failure_then_build_failure": {
+  "job": {
+   "conclusion": "failure",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Set up .NET",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Plan",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Join the tailnet",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Cache tripwire",
+     "number": 9,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Build",
+     "number": 10,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": "Process completed with exit code 1.\n",
+  "markers": [
+   "health",
+   "services"
+  ]
+ },
+ "tailnet_join_failure_then_pass": {
+  "job": {
+   "conclusion": "success",
+   "id": 1,
+   "name": "run unit-attempt",
+   "status": "completed",
+   "steps": [
+    {
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Checkout",
+     "number": 2,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Set up .NET",
+     "number": 3,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Health",
+     "number": 4,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Services",
+     "number": 5,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Affected",
+     "number": 6,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Plan",
+     "number": 7,
+     "status": "completed"
+    },
+    {
+     "conclusion": "failure",
+     "name": "Join the tailnet",
+     "number": 8,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Cache tripwire",
+     "number": 9,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Build",
+     "number": 10,
+     "status": "completed"
+    },
+    {
+     "conclusion": "success",
+     "name": "Test",
+     "number": 11,
+     "status": "completed"
+    }
+   ]
+  },
+  "log": null,
+  "markers": [
+   "health",
+   "services",
+   "build",
+   "test-start",
+   "test-end"
+  ]
+ },
  "test_end_with_runner_lost_text": {
   "job": {
    "conclusion": "failure",
