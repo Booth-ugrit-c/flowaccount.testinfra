@@ -98,3 +98,4 @@ def test_a_missing_list_is_a_usage_error_and_never_green(tmp_path):
 def test_the_key_keeps_only_safe_bytes():
     assert count_key("sim/dotnet/tests/A.Tests/A.Tests.csproj") == "sim_dotnet_tests_A.Tests_A.Tests.csproj"
     assert count_key("a b/é") == "a_b___"
+    assert count_key("A-b.c_d") == "A-b.c_d"

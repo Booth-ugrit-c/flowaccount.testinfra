@@ -244,8 +244,8 @@ def test_without_sim_dotnet_the_real_dotnet_on_the_path_is_used(lab):
 
 
 def test_crlf_and_non_ascii_project_names_meet_the_zero_tests_guard(lab):
-    odd = "sim/dotnet/tests/Tëst Tests/Tëst.Tests.csproj"
-    lab.behaviour("Core.Tests 0 0 3", "Tëst.Tests 0 0 4")
+    odd = "sim/dotnet/tests/Tëst Tests/Tëst-Tests.csproj"
+    lab.behaviour("Core.Tests 0 0 3", "Tëst-Tests 0 0 4")
     listing = lab.listing(CORE, odd, CORE, newline="\r\n")
     result = lab.run(listing)
     assert result.returncode == 0, result.stdout + result.stderr

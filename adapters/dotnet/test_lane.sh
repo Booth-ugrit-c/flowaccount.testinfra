@@ -29,7 +29,6 @@ if [ "${1:-}" = --one ]; then
     filter=$3
     project=$4
     key=$(key_of "$project")
-    rm -f "$counts/$key.trx" "$counts/$key.count" "$counts/$key.count.tmp" "$counts/$key.log"
     set -- test "$WORKSPACE/$project" -c Release --no-build -v:normal --disable-build-servers \
         --results-directory "$counts" --logger "trx;LogFileName=$key.trx"
     [ -z "$filter" ] || set -- "$@" --filter "$filter"
@@ -70,6 +69,11 @@ if [ -z "$projects" ]; then
     echo "test_lane: 0 projects selected"
     exit 0
 fi
+
+printf '%s\n' "$projects" | while IFS= read -r project; do
+    key=$(key_of "$project")
+    rm -f "$counts/$key.trx" "$counts/$key.count" "$counts/$key.count.tmp" "$counts/$key.log"
+done
 
 status=0
 printf '%s\n' "$projects" | tr '\n' '\0' |

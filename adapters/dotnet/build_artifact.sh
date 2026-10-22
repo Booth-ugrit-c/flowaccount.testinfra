@@ -25,6 +25,14 @@ case $mode in
         ;;
     unpack)
         archive=${2:?usage: build_artifact.sh unpack ARCHIVE}
+        parent=$ROOT
+        while [ -n "$parent" ]; do
+            [ ! -L "$parent" ] || die "refusing: the checkout holds a symlink $parent"
+            case $parent in
+                */*) parent=${parent%/*} ;;
+                *) parent= ;;
+            esac
+        done
         if [ -d "$ROOT" ]; then
             link=$(find "$ROOT" -type l -print | head -n 1)
             [ -z "$link" ] || die "refusing: the checkout holds a symlink $link"

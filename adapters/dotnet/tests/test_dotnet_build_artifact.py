@@ -148,8 +148,10 @@ def test_an_absolute_member_is_refused(lab, name):
     [
         link("sim/dotnet/src/Core/bin/escape", "../../../../..", tarfile.SYMTYPE),
         link("sim/dotnet/src/Core/bin/hard.dll", "sim/dotnet/src/Core/bin/Release/ok.dll", tarfile.LNKTYPE),
+        link("sim/dotnet/src/Core/bin/fifo", "", tarfile.FIFOTYPE),
+        link("sim/dotnet/src/Core/bin/char", "", tarfile.CHRTYPE),
     ],
-    ids=["symlink", "hardlink"],
+    ids=["symlink", "hardlink", "fifo", "char-device"],
 )
 def test_a_link_member_is_refused(lab, member):
     archive = lab.craft(member)
@@ -189,6 +191,23 @@ def test_a_symlink_in_the_checkout_refuses_the_unpack(lab, tmp_path):
     assert result.returncode == 1
     assert "symlink" in result.stderr
     assert list(outside.iterdir()) == []
+
+
+def test_a_symlink_above_the_solution_root_refuses_the_unpack(lab, tmp_path):
+    outside = tmp_path / "outside"
+    (outside / "dotnet").mkdir(parents=True)
+    try:
+        os.symlink(outside, lab.workspace / "sim", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable here: {exc}")
+    probe = subprocess.run([lab.shell, "-c", "[ -L sim ]"], cwd=lab.workspace, timeout=30)
+    if probe.returncode != 0:
+        pytest.skip("this shell does not see the symlink as a link")
+    archive = lab.craft()
+    result = lab.run("unpack", archive)
+    assert result.returncode == 1
+    assert "symlink sim" in result.stderr
+    assert list((outside / "dotnet").iterdir()) == []
 
 
 def test_an_unreadable_archive_is_refused(lab):
