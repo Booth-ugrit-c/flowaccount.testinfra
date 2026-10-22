@@ -38,6 +38,6 @@ It exits 2, and the run goes red, when the checkout is not `--head` or has local
 What is cached is the npm download cache (`_cacache` under `npm ci --cache DIR`). The key covers the lockfile, the node and npm major versions and the platform.
 
 - Not `node_modules`. Restored `node_modules` is executable code trusted as-is. With the download cache, `npm ci` checks every tarball against the lockfile's sha512 integrity, and the client refuses a lockfile entry that lacks one. A bad store entry therefore cannot change what is installed.
-- Not the Nx task cache. A replayed result is a test that did not run, and affected projects miss the cache anyway. Tests run with `--skip-nx-cache`.
+- Not the Nx task cache. A replayed result is a test that did not run, and affected projects miss the cache anyway. `nx.json` turns caching off for `test`, and the run also passes `--skip-nx-cache`.
 
 Pull-request runs only restore. `save` uploads only on a GitHub-hosted runner, at the tip of `origin/$SIM_DEFAULT_BRANCH`, from a clean tree, with the writer key. The code check is a second line of defence: the boundary is that the writer key exists only in the default-branch environment.

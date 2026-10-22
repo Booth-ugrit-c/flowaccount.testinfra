@@ -251,3 +251,28 @@ def test_sim_workspace_declares_every_dependency_it_imports():
         source = (directory / "index.js").read_text(encoding="utf-8")
         imported = {line.split('"')[1] for line in source.splitlines() if 'require("@sim/' in line}
         assert imported == names, directory.name
+
+
+@pytest.mark.parametrize("bin_field, expected", [
+    ({"nx": "./dist/bin/nx.js", "nx-cloud": "./dist/bin/cloud.js"}, "dist/bin/nx.js"),
+    ("./bin/nx.js", "bin/nx.js"),
+])
+def test_nx_entry_follows_the_package_bin_field(tmp_path, bin_field, expected):
+    package = tmp_path / "node_modules" / "nx"
+    write(package / "package.json", json.dumps({"name": "nx", "bin": bin_field}))
+    write(package / expected, "")
+    assert affected.nx_entry(tmp_path) == (package / expected).resolve()
+
+
+@pytest.mark.parametrize("manifest", [None, {"name": "nx"}, {"bin": {"nx": "../../evil.js"}}, {"bin": "./missing.js"}])
+def test_nx_entry_refuses_a_missing_or_escaping_executable(tmp_path, manifest):
+    write(tmp_path / "evil.js", "")
+    if manifest is not None:
+        write(tmp_path / "node_modules" / "nx" / "package.json", json.dumps(manifest))
+    with pytest.raises(affected.GraphError):
+        affected.nx_entry(tmp_path)
+
+
+def test_sim_workspace_never_replays_a_cached_test_result():
+    nx = json.loads((Path(__file__).resolve().parents[3] / ROOT / "nx.json").read_text(encoding="utf-8"))
+    assert nx["targetDefaults"]["test"]["cache"] is False

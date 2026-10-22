@@ -243,6 +243,22 @@ def check_checkout(head: str, root: str, cwd: Path) -> None:
         raise GitError(f"{root} has modified or untracked files; the Nx graph would not match {head}")
 
 
+def nx_entry(workspace: Path) -> Path:
+    package = workspace / "node_modules" / "nx"
+    try:
+        manifest = json.loads((package / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise GraphError(f"nx is not installed under {workspace}; run npm ci first") from None
+    entry = manifest.get("bin") if isinstance(manifest, dict) else None
+    entry = entry.get("nx") if isinstance(entry, dict) else entry
+    if not isinstance(entry, str) or not entry:
+        raise GraphError("the nx package declares no nx executable")
+    resolved = (package / entry).resolve()
+    if not resolved.is_relative_to(package.resolve()) or not resolved.is_file():
+        raise GraphError(f"the nx executable {entry!r} is not a file inside the nx package")
+    return resolved
+
+
 def run_nx_graph(workspace: Path) -> dict:
     override = os.environ.get("SIM_NX")
     if override:
@@ -251,7 +267,7 @@ def run_nx_graph(workspace: Path) -> dict:
         node = shutil.which("node")
         if node is None:
             raise GraphError("node is not installed")
-        command = [node, str(workspace / "node_modules" / "nx" / "bin" / "nx.js")]
+        command = [node, str(nx_entry(workspace))]
     env = {**os.environ, "NX_DAEMON": "false", "NX_NO_CLOUD": "true", "NX_TUI": "false"}
     with tempfile.TemporaryDirectory(prefix="ws-graph-") as work:
         target = Path(work) / "graph.json"
