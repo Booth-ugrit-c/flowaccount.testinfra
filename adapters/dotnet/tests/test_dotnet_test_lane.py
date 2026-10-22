@@ -260,7 +260,7 @@ def test_crlf_and_non_ascii_project_names_meet_the_zero_tests_guard(lab):
         timeout=60,
     )
     assert guard.returncode == 0, guard.stdout + guard.stderr
-    assert f"total=4 {odd}" in guard.stdout
+    assert f"executed=4 {odd}" in guard.stdout
 
 
 def guard(listing, counts):
@@ -280,7 +280,7 @@ def test_a_project_whose_tests_were_all_skipped_turns_the_guard_red(lab):
     result = guard(listing, lab.counts)
     assert result.returncode == 1, result.stdout
     assert f"{CORE} ran 0 tests" in result.stdout
-    assert f"total=2 {UTILS}" in result.stdout
+    assert f"executed=2 {UTILS}" in result.stdout
 
 
 def test_a_zero_count_from_the_lane_turns_the_guard_red(lab):

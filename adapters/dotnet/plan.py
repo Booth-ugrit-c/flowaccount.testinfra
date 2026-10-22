@@ -8,11 +8,13 @@ from typing import Optional, Sequence
 
 from adapters.dotnet import affected
 
-LANES = ("unit", "integration")
+LANES = ("unit", "integration", "all")
 INTEGRATION_MARKER = "IntegrationTests"
 
 
 def lane_tests(tests: Sequence[str], lane: str) -> list:
+    if lane == "all":
+        return list(tests)
     wanted = lane == "integration"
     return [path for path in tests if (INTEGRATION_MARKER in path) == wanted]
 
@@ -68,7 +70,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             selection = json.loads(Path(args.affected).read_text(encoding="utf-8"))
         tests = lane_tests([str(path) for path in selection["test"]], args.lane)
         if args.emit == "build":
-            seeds = tests + (unit_extras(selection["build"]) if args.lane == "unit" else [])
+            seeds = tests + (unit_extras(selection["build"]) if args.lane in ("unit", "all") else [])
             result = build_plan(read_graph(args.root, Path.cwd()), seeds)
         else:
             result = tests

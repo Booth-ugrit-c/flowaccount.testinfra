@@ -60,21 +60,33 @@ case $mode in
             cache_off "$markers" "the store did not answer the tripwire check"
         fi
         ;;
+    restore)
+        plan=${2:?usage: cache_build.sh restore PLAN_FILE HITS_FILE}
+        hits=${3:?usage: cache_build.sh restore PLAN_FILE HITS_FILE}
+        : > "$hits"
+        [ "${SIM_CACHE_MODE:-use}" != off ] || exit 0
+        while IFS= read -r project; do
+            [ -n "$project" ] || continue
+            answer=$(cache restore --project "$project") || answer=
+            if [ "$answer" = hit ]; then
+                echo "cache: hit ${project##*/}"
+                printf '%s\n' "$project" >> "$hits"
+            fi
+        done < "$plan"
+        ;;
     build)
-        plan=${2:?usage: cache_build.sh build PLAN_FILE BUILT_FILE}
-        built=${3:?usage: cache_build.sh build PLAN_FILE BUILT_FILE}
+        plan=${2:?usage: cache_build.sh build PLAN_FILE HITS_FILE BUILT_FILE}
+        hits=${3:?usage: cache_build.sh build PLAN_FILE HITS_FILE BUILT_FILE}
+        built=${4:?usage: cache_build.sh build PLAN_FILE HITS_FILE BUILT_FILE}
+        [ -f "$hits" ] || { echo "cache: no hits file; run restore first" >&2; exit 1; }
         : > "$built"
         while IFS= read -r project; do
             [ -n "$project" ] || continue
-            if [ "${SIM_CACHE_MODE:-use}" != off ]; then
-                answer=$(cache restore --project "$project") || answer=
-                if [ "$answer" = hit ]; then
-                    echo "cache: hit ${project##*/}"
-                    continue
-                fi
+            if grep -Fqx -- "$project" "$hits"; then
+                continue
             fi
             echo "cache: build ${project##*/}"
-            (cd "$ROOT" && dotnet_cmd build "$WORKSPACE/$project" -c Release --disable-build-servers \
+            (cd "$ROOT" && dotnet_cmd build "$WORKSPACE/$project" -c Release --disable-build-servers -v:normal \
                 -p:BuildProjectReferences=false -p:IncludeSourceRevisionInInformationalVersion=false) || {
                 echo "cache: build failed ${project##*/}" >&2
                 exit 1
@@ -107,7 +119,7 @@ case $mode in
         done < "$built"
         ;;
     *)
-        echo "usage: cache_build.sh tripwire|build|save ..." >&2
+        echo "usage: cache_build.sh tripwire|restore|build|save ..." >&2
         exit 2
         ;;
 esac

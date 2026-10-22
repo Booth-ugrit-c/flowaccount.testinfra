@@ -14,7 +14,7 @@ import workflow_policy
 SCRIPT = Path(__file__).resolve().parents[1] / "prejob.sh"
 BASH = shutil.which("bash")
 SHELLS = [name for name in ("bash", "sh") if shutil.which(name)]
-ATTEMPT_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "sim-gate-attempt.yml"
+ATTEMPT_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "tpl-dotnet-build.yml"
 HYGIENE_STEP = next(
     step
     for step in workflow_policy.parse(ATTEMPT_WORKFLOW.read_text(encoding="utf-8"))["jobs"]["run"]["steps"]

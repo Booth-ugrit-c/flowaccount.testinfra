@@ -51,7 +51,7 @@ def check(projects: list[str], counts: Path) -> tuple[int, list[str]]:
             lines.append(f"::error title=zero tests::{project} ran 0 tests")
             failed = True
         else:
-            lines.append(f"total={count} {project}")
+            lines.append(f"executed={count} {project}")
     lines.append(f"{len(projects)} projects selected")
     return (1 if failed else 0), lines
 

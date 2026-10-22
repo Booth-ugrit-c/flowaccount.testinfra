@@ -33,8 +33,8 @@ def run(tmp_path: Path, projects: list[str], counts: dict[str, str]):
 def test_every_project_with_tests_passes_and_prints_its_total(tmp_path):
     result = run(tmp_path, [CORE, UTILS], {count_key(CORE): "3\n", count_key(UTILS): "1"})
     assert result.returncode == 0, result.stdout + result.stderr
-    assert f"total=3 {CORE}" in result.stdout
-    assert f"total=1 {UTILS}" in result.stdout
+    assert f"executed=3 {CORE}" in result.stdout
+    assert f"executed=1 {UTILS}" in result.stdout
 
 
 def test_a_project_that_ran_zero_tests_is_red(tmp_path):
@@ -81,7 +81,7 @@ def test_two_projects_sharing_a_count_key_are_red(tmp_path):
 def test_a_repeated_line_is_one_project(tmp_path):
     result = run(tmp_path, [CORE, CORE], {count_key(CORE): "2"})
     assert result.returncode == 0, result.stdout
-    assert result.stdout.count(f"total=2 {CORE}") == 1
+    assert result.stdout.count(f"executed=2 {CORE}") == 1
 
 
 def test_a_missing_list_is_a_usage_error_and_never_green(tmp_path):

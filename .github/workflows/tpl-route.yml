@@ -1,0 +1,44 @@
+name: tpl-route
+
+on:
+  workflow_call:
+    inputs:
+      runner_label:
+        description: Opaque runner label; it is printed unmasked in public logs, so never a host name
+        required: false
+        default: ""
+        type: string
+    outputs:
+      target:
+        description: onprem when the lab label has a free runner, otherwise cloud; empty when the route job did not run
+        value: ${{ jobs.route.outputs.target }}
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: route
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: sim-route
+    outputs:
+      target: ${{ steps.pick.outputs.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Pick the target
+        id: pick
+        env:
+          SIM_ROUTE_TOKEN: ${{ secrets.SIM_ROUTE_TOKEN }}
+          LAB_LABEL: ${{ inputs.runner_label }}
+        run: |
+          target=$(python3 -m core.route "$LAB_LABEL")
+          echo "target=${target}" >> "$GITHUB_OUTPUT"
