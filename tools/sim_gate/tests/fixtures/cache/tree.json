@@ -1,0 +1,25 @@
+{
+  "files": {
+    "Directory.Packages.props": "<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup></Project>",
+    "docs/notes.txt": "unrelated notes",
+    "sim/README.md": "unrelated ancestor file",
+    "sim/Directory.Build.targets": "<Project><Target Name=\"Noop\" /></Project>",
+    "sim/other/Directory.Build.props": "<Project><PropertyGroup><Noise>1</Noise></PropertyGroup></Project>",
+    "sim/dotnet/Directory.Build.props": "<Project><PropertyGroup><IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion></PropertyGroup></Project>",
+    "sim/dotnet/global.json": "{\"sdk\": {\"version\": \"10.0.100\", \"rollForward\": \"disable\"}}",
+    "sim/dotnet/nuget.config": "<configuration><packageSources><clear /></packageSources></configuration>",
+    "sim/dotnet/Sim.sln": "Microsoft Visual Studio Solution File, Format Version 12.00",
+    "sim/dotnet/src/Utils/Utils.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+    "sim/dotnet/src/Utils/Stamp.cs": "public static class UtilsStamp { public static string Value() => \"utils-v1\"; }",
+    "sim/dotnet/src/Core/Core.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+    "sim/dotnet/src/Core/Stamp.cs": "public static class CoreStamp { public static string Value() => \"core-v1\"; }",
+    "sim/dotnet/src/Service/Service.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"..\\Core\\Core.csproj\" /><ProjectReference Include=\"..\\Utils\\Utils.csproj\" /></ItemGroup></Project>",
+    "sim/dotnet/src/Service/Facade.cs": "public static class Facade { public static string Run() => CoreStamp.Value() + UtilsStamp.Value(); }",
+    "sim/dotnet/src/Other/Other.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+    "sim/dotnet/src/Other/Stamp.cs": "public static class OtherStamp { public static string Value() => \"other-v1\"; }",
+    "sim/dotnet/tests/Service.Tests/Service.Tests.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup><ItemGroup><ProjectReference Include=\"..\\..\\src\\Service\\Service.csproj\" /></ItemGroup></Project>",
+    "sim/dotnet/tests/Service.Tests/FacadeTests.cs": "public class FacadeTests { }",
+    "sim/dotnet/tests/Other.Tests/Other.Tests.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup><ItemGroup><ProjectReference Include=\"..\\..\\src\\Other\\Other.csproj\" /></ItemGroup></Project>",
+    "sim/dotnet/tests/Other.Tests/StampTests.cs": "public class StampTests { }"
+  }
+}
