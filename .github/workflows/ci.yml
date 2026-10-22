@@ -113,5 +113,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: zizmor --config .github/zizmor.yml .github/workflows
-      - name: shellcheck pre-push hook
-        run: shellcheck .githooks/pre-push
+      - name: shellcheck
+        run: shellcheck .githooks/pre-push tools/sim_gate/*.sh
