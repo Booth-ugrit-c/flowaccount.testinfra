@@ -556,6 +556,13 @@ def test_a_build_job_is_done_at_its_build_marker(run_result, markers, job, infra
     assert classify.classify(markers, job, "", [], True, run_result, infra_steps, "build") == expected
 
 
+def test_a_build_job_that_lost_its_runner_after_the_build_marker_is_test():
+    job = {"status": "completed", "conclusion": "failure", "steps": [{"name": "Upload markers", "conclusion": "cancelled"}]}
+    fingerprints = classify.load_fingerprints()
+    assert classify.classify({"health"}, job, LOST, fingerprints, True, "failure", classify.INFRA_STEPS, "build") == "infra"
+    assert classify.classify({"health", "build"}, job, LOST, fingerprints, True, "failure", classify.INFRA_STEPS, "build") == "test"
+
+
 def build_markers(tmp_path, *names):
     markers = tmp_path / "job" / "markers"
     markers.mkdir(parents=True)
