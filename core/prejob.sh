@@ -8,7 +8,14 @@ fail() {
 
 DOCKER=${SIM_DOCKER:-docker}
 PS=${SIM_PS:-ps}
-SURVIVOR_COMMS="dotnet testhost vstest.console VBCSCompiler"
+SURVIVOR_COMMS=${SIM_SURVIVORS:-}
+case $SURVIVOR_COMMS in
+    *[!\ ]*) ;;
+    *) fail "SIM_SURVIVORS is empty; the adapter must name the process names an earlier job can leave behind" ;;
+esac
+case $SURVIVOR_COMMS in
+    *[!A-Za-z0-9._\ -]*) fail "SIM_SURVIVORS must be process names of A-Za-z0-9._- separated by spaces" ;;
+esac
 
 runner=${RUNNER_NAME:-}
 case $runner in

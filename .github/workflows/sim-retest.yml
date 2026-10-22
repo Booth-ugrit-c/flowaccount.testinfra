@@ -1,0 +1,27 @@
+name: sim-retest
+
+run-name: ${{ format('sim-retest of {0}', inputs.run_id) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: The sim-gate run to consider for a retest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ format('sim-retest-{0}', inputs.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  requeue:
+    name: requeue
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Stand-in not wired
+        run: echo "the retest stand-in is not wired yet, nothing was dispatched"

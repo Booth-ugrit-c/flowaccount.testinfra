@@ -9,9 +9,19 @@ from pathlib import Path
 
 import pytest
 
+import workflow_policy
+
 SCRIPT = Path(__file__).resolve().parents[1] / "prejob.sh"
 BASH = shutil.which("bash")
 SHELLS = [name for name in ("bash", "sh") if shutil.which(name)]
+ATTEMPT_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "sim-gate-attempt.yml"
+HYGIENE_STEP = next(
+    step
+    for step in workflow_policy.parse(ATTEMPT_WORKFLOW.read_text(encoding="utf-8"))["jobs"]["run"]["steps"]
+    if step.get("name") == "Hygiene"
+)
+DOTNET_SURVIVORS = HYGIENE_STEP["env"]["SIM_SURVIVORS"]
+GIT = ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"]
 
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash is required")
 
@@ -111,6 +121,7 @@ class Lab:
             SCRIPT=posix(SCRIPT),
             PREJOB_SHELL=self.shell,
             RUNNER_NAME="runner-a",
+            SIM_SURVIVORS=DOTNET_SURVIVORS,
             GITHUB_WORKSPACE=posix(self.workspace),
             SIM_DOCKER=posix(self.t / "docker"),
             SIM_PS=posix(self.t / "ps"),
@@ -281,7 +292,79 @@ def test_survivor_report_names_pid_and_command_but_no_arguments(lab):
     assert str(result["other_user"]) not in result["out"].replace("alive", "")
 
 
+def test_the_survivor_names_come_from_the_adapter_not_from_core(lab):
+    result = lab.run(SIM_SURVIVORS="node")
+    assert result["rc"] == 0, result["out"]
+    assert result["victim"] == "alive"
+    assert "prejob: clean" in result["out"]
+
+
+@pytest.mark.parametrize("survivors", [None, "", "   ", "dotnet;id", "dotnet\nnode", "dot*"])
+def test_missing_or_unsafe_survivor_names_fail_before_any_cleanup(lab, survivors):
+    lab.containers(("container", "c-a1", "runner-a"))
+    project = lab.project("src/App")
+    result = lab.run(SIM_SURVIVORS=survivors)
+    assert result["rc"] != 0
+    assert "SIM_SURVIVORS" in result["out"]
+    assert lab.docker_calls() == []
+    assert (project / "bin" / "artifact.dll").exists()
+    assert result["victim"] == "alive"
+
+
 def test_a_sibling_runners_live_job_process_is_not_a_survivor(lab):
     result = lab.run()
     assert result["victim"] == "dead"
     assert result["sibling"] == "alive"
+
+
+def test_the_shipped_survivor_list_names_the_dotnet_processes():
+    assert DOTNET_SURVIVORS.split() == ["dotnet", "testhost", "vstest.console", "VBCSCompiler"]
+
+
+def writable_then(function, path, _):
+    os.chmod(path, 0o700)
+    function(path)
+
+
+def run_hygiene_step(tmp_path, prejob, sha=None, extra=None):
+    workspace = tmp_path / "workspace"
+    trusted = workspace / ".sim-trusted"
+    (trusted / "core").mkdir(parents=True)
+    (trusted / "core" / "prejob.sh").write_bytes(prejob.encode())
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "trusted"]):
+        subprocess.run([*GIT, *args], cwd=trusted, check=True, capture_output=True)
+    head = subprocess.run([*GIT, "rev-parse", "HEAD"], cwd=trusted, check=True, capture_output=True, text=True).stdout.strip()
+    if extra:
+        extra(trusted)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("GITHUB_", "SIM_"))}
+    env.update(HYGIENE_STEP["env"], GITHUB_SHA=sha or head)
+    proc = subprocess.run([BASH, "-c", HYGIENE_STEP["run"]], cwd=workspace, env=env, capture_output=True, text=True, timeout=60)
+    return proc, trusted
+
+
+def test_the_hygiene_step_runs_the_trusted_copy_with_the_survivor_list_and_removes_it(tmp_path):
+    proc, trusted = run_hygiene_step(tmp_path, 'echo "ran with $SIM_SURVIVORS"\nexit 3\n')
+    assert proc.returncode == 3
+    assert f"ran with {DOTNET_SURVIVORS}" in proc.stdout
+    assert not trusted.exists()
+
+
+def test_the_hygiene_step_passes_when_the_trusted_prejob_passes(tmp_path):
+    proc, trusted = run_hygiene_step(tmp_path, "echo clean\n")
+    assert (proc.returncode, proc.stdout.strip()) == (0, "clean")
+    assert not trusted.exists()
+
+
+def test_the_hygiene_step_refuses_a_trusted_copy_that_is_not_the_dispatch_commit(tmp_path):
+    proc, trusted = run_hygiene_step(tmp_path, "echo ran\n", sha="0" * 40)
+    assert proc.returncode == 1
+    assert "ran" not in proc.stdout.replace("::error::the trusted checkout is not the dispatch commit", "")
+    assert "the trusted checkout is not the dispatch commit" in proc.stdout
+    assert not trusted.exists()
+
+
+def test_the_hygiene_step_refuses_a_trusted_directory_that_is_not_a_checkout(tmp_path):
+    proc, trusted = run_hygiene_step(tmp_path, "echo ran\n", extra=lambda path: shutil.rmtree(path / ".git", onexc=writable_then))
+    assert proc.returncode == 1
+    assert "the trusted checkout is not the dispatch commit" in proc.stdout
+    assert not trusted.exists()

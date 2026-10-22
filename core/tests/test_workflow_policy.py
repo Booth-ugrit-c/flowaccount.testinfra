@@ -7,16 +7,21 @@ import pytest
 
 import workflow_policy as policy
 
-WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOWS = ROOT / ".github" / "workflows"
 LANE = "sim-gate-lane.yml"
 ATTEMPT = "sim-gate-attempt.yml"
 TOP = "sim-gate.yml"
+RETEST = "sim-retest.yml"
+CLASSIFY_PIN = "the Classify step must run exactly the pinned classify invocation"
+HYGIENE = "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        env:\n          SIM_SURVIVORS: dotnet testhost vstest.console VBCSCompiler\n"
+TRUSTED = "      - name: Checkout trusted\n        if: ${{ runner.environment == 'self-hosted' }}\n"
 SHA = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 ENVIRONMENT = "    environment: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && inputs.hosted == true && 'sim-cache-write' || inputs.hosted == true && 'sim-cache-read' || 'sim-cache-lab' }}\n"
 
 
 def test_the_shipped_workflows_satisfy_the_policy():
-    assert policy.violations(WORKFLOWS) == []
+    assert policy.violations(WORKFLOWS, root=ROOT) == []
 
 
 MUTATIONS = {
@@ -130,7 +135,7 @@ MUTATIONS = {
     ),
     "expression inside a run script": (
         ATTEMPT,
-        "        run: sh core/prejob.sh",
+        "        run: sh adapters/dotnet/cache_build.sh tripwire \"$MARKERS\"",
         "        run: echo ${{ inputs.tag }}",
         "expression inside run",
     ),
@@ -184,8 +189,8 @@ MUTATIONS = {
     ),
     "the tailnet join failing the lane": (
         ATTEMPT,
-        "        continue-on-error: true\n        uses: tailscale/github-action@",
-        "        uses: tailscale/github-action@",
+        "        continue-on-error: true\n        timeout-minutes: 3\n",
+        "        timeout-minutes: 3\n",
         "the tailnet join must be continue-on-error: true",
     ),
     "the tailnet join without its id": (
@@ -228,12 +233,12 @@ MUTATIONS = {
         TOP,
         "        run: sh core/resolve_refs.sh\n",
         "        run: echo ok\n",
-        "validate must resolve head and base with sh core/resolve_refs.sh",
+        "validate must resolve every PR input with sh core/resolve_refs.sh",
     ),
     "validate checking out the requested head instead of the dispatch commit": (
         TOP,
         "          fetch-depth: 0\n          persist-credentials: false\n      - name: Resolve refs",
-        "          ref: ${{ inputs.head }}\n          fetch-depth: 0\n          persist-credentials: false\n      - name: Resolve refs",
+        "          ref: ${{ inputs.pr_branch }}\n          fetch-depth: 0\n          persist-credentials: false\n      - name: Resolve refs",
         "validate must check out the dispatch commit itself",
     ),
     "validate without the full history to check branch containment": (
@@ -244,15 +249,15 @@ MUTATIONS = {
     ),
     "validate not publishing the resolved head": (
         TOP,
-        "      head_sha: ${{ steps.resolve.outputs.head_sha }}\n",
-        "      head_sha: ${{ inputs.head }}\n",
-        "validate must output head_sha, base_sha and default_tip",
+        "      pr_sha: ${{ steps.resolve.outputs.pr_sha }}\n",
+        "      pr_sha: ${{ inputs.pr_sha }}\n",
+        "validate must output pr_sha, base_sha, default_tip",
     ),
     "the unit lane given the unresolved head": (
         TOP,
-        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.head_sha }}\n",
-        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ inputs.head }}\n",
-        "job unit reads the unresolved ref",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.pr_sha }}\n",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ inputs.pr_branch }}\n",
+        "job unit reads an unresolved PR input",
     ),
     "the integration lane given the unresolved base": (
         TOP,
@@ -262,14 +267,14 @@ MUTATIONS = {
     ),
     "a lane told it is the default tip without validate": (
         TOP,
-        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.head_sha }}\n      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n",
-        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.head_sha }}\n      default_tip: true\n",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.pr_sha }}\n      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.pr_sha }}\n      default_tip: true\n",
         "lane unit must take head, base and default_tip from validate only",
     ),
     "the lane attempt claiming the default tip": (
         LANE,
-        "      default_tip: ${{ inputs.default_tip }}\n      runner: ${{ needs.route",
-        "      default_tip: true\n      runner: ${{ needs.route",
+        "      default_tip: ${{ inputs.default_tip }}\n      cache: ${{ inputs.cache }}\n      runner: ${{ needs.route",
+        "      default_tip: true\n      cache: ${{ inputs.cache }}\n      runner: ${{ needs.route",
         "the lane attempt must pass head and default_tip through unchanged",
     ),
     "continue-on-error": (
@@ -324,25 +329,211 @@ MUTATIONS = {
         ATTEMPT,
         ' --reason-file "$RUNNER_TEMP/reason.txt"',
         "",
-        "does not capture the infra reason",
+        CLASSIFY_PIN,
     ),
     "classify without the run job result": (
         ATTEMPT,
         ' --run-result "$RUN_RESULT"',
         "",
-        "does not take the run job result from needs.run.result",
+        CLASSIFY_PIN,
     ),
     "classify with the run job result from another source": (
         ATTEMPT,
         "          RUN_RESULT: ${{ needs.run.result }}",
         "          RUN_RESULT: success",
-        "does not take the run job result from needs.run.result",
+        CLASSIFY_PIN,
+    ),
+    "classify with a forced run result appended": (
+        ATTEMPT,
+        ' --infra-step "Set up .NET")',
+        ' --infra-step "Set up .NET" --run-result success)',
+        CLASSIFY_PIN,
+    ),
+    "classify with the run result overwritten in the script": (
+        ATTEMPT,
+        "          set -eu\n          verdict=$(python3 -m core.classify",
+        "          set -eu\n          RUN_RESULT=success\n          verdict=$(python3 -m core.classify",
+        CLASSIFY_PIN,
+    ),
+    "classify without the adapter setup step as infra": (
+        ATTEMPT,
+        ' --infra-step "Set up .NET")',
+        ")",
+        CLASSIFY_PIN,
+    ),
+    "classify with the test step named as infra": (
+        ATTEMPT,
+        ' --infra-step "Set up .NET")',
+        ' --infra-step "Set up .NET" --infra-step Test)',
+        CLASSIFY_PIN,
     ),
     "gate without the unit reason": (
         TOP,
-        '            --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" \\\n',
+        ' --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" ;;',
+        " ;;",
+        "the Decide step must run exactly the pinned gate invocation",
+    ),
+    "gate passing when validate selected nothing": (
+        TOP,
+        '              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;\n          esac\n          case "$INTEGRATION_SELECTED"',
+        '              *) ;;\n          esac\n          case "$INTEGRATION_SELECTED"',
+        "the Decide step must run exactly the pinned gate invocation",
+    ),
+    "gate not waiting for validate": (
+        TOP,
+        "    needs:\n      - validate\n      - unit\n",
+        "    needs:\n      - unit\n",
+        "the gate must need validate and every lane",
+    ),
+    "a lane job without the validate selection guard": (
+        TOP,
+        "    if: ${{ needs.validate.outputs.lane_unit == 'true' }}\n",
         "",
-        "infra reason of lane unit",
+        "job unit must run exactly when validate selects it",
+    ),
+    "a lane job guarded on another lane's selection": (
+        TOP,
+        "    if: ${{ needs.validate.outputs.lane_unit == 'true' }}\n",
+        "    if: ${{ needs.validate.outputs.lane_integration == 'true' }}\n",
+        "job unit must run exactly when validate selects it",
+    ),
+    "a lane job the validate lane list does not know": (
+        TOP,
+        "          KNOWN_LANES: unit integration\n",
+        "          KNOWN_LANES: unit\n",
+        "the lane names differ between",
+    ),
+    "a validate lane output with no lane job": (
+        TOP,
+        "      lane_integration: ${{ steps.resolve.outputs.lane_integration }}\n",
+        "      lane_integration: ${{ steps.resolve.outputs.lane_integration }}\n      lane_e2e: ${{ steps.resolve.outputs.lane_e2e }}\n",
+        "the lane names differ between",
+    ),
+    "the entry with an eleventh input": (
+        TOP,
+        "      retest_of:\n",
+        "      extra:\n        required: false\n        type: string\n      retest_of:\n",
+        "the entry contract is",
+    ),
+    "the entry without the pr_author input": (
+        TOP,
+        "      pr_author:\n        description: Login of the pull request author, or empty\n        required: false\n        default: \"\"\n        type: string\n",
+        "",
+        "the entry contract is",
+    ),
+    "pr_branch defaulting to another branch": (
+        TOP,
+        "        default: main\n",
+        "        default: develop\n",
+        "input pr_branch has default 'develop'",
+    ),
+    "cache as a free string": (
+        TOP,
+        "        default: \"use\"\n        type: choice\n",
+        "        default: \"use\"\n        type: string\n",
+        "input cache has type 'string'",
+    ),
+    "a fault option no job reads": (
+        TOP,
+        "          - kill_both\n",
+        "          - kill_both\n          - fail_health_once\n",
+        "fault options are",
+    ),
+    "the unit lane ignoring the fail_test fault": (
+        TOP,
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.pr_sha }}\n      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n      cache: ${{ inputs.cache }}\n      fail_test: ${{ inputs.fault == 'fail_test' }}\n",
+        "      lane: unit\n      base: ${{ needs.validate.outputs.base_sha }}\n      head: ${{ needs.validate.outputs.pr_sha }}\n      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n      cache: ${{ inputs.cache }}\n      fail_test: false\n",
+        "lane unit maps fault fail_test",
+    ),
+    "the integration lane killing on the onprem-only fault everywhere": (
+        TOP,
+        "      fail_test: ${{ inputs.fault == 'fail_test' }}\n      simulate_kill: ${{ inputs.fault == 'kill_onprem' && 'onprem' || inputs.fault == 'kill_both' && 'both' || 'none' }}\n      lab_label: ${{ vars.SIM_LAB_LABEL_INTEGRATION }}",
+        "      fail_test: ${{ inputs.fault == 'fail_test' }}\n      simulate_kill: ${{ inputs.fault == 'kill_onprem' && 'both' || inputs.fault == 'kill_both' && 'both' || 'none' }}\n      lab_label: ${{ vars.SIM_LAB_LABEL_INTEGRATION }}",
+        "lane integration maps fault kill_onprem",
+    ),
+    "a lane dropping the cache input": (
+        TOP,
+        "      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n      cache: ${{ inputs.cache }}\n",
+        "      default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}\n",
+        "lane unit must pass cache",
+    ),
+    "the run name never marking a retest": (
+        TOP,
+        " && format(' retest of {0} (Retest)', inputs.retest_of) || ''",
+        " && '' || ''",
+        "must contain 'retest of 1' and end with (Retest)",
+    ),
+    "the run name marking every run as a retest": (
+        TOP,
+        "inputs.retest_of != '' && format(' retest of {0} (Retest)', inputs.retest_of) || ''",
+        "format(' retest of {0} (Retest)', inputs.retest_of)",
+        "without retest_of must not say retest",
+    ),
+    "the run name with the retest marker in the middle": (
+        TOP,
+        "format('sim-gate {0} {1} from {2}{3}{4}'",
+        "format('sim-gate {0}{4} {1} from {2}{3}'",
+        "must contain 'retest of 1' and end with (Retest)",
+    ),
+    "the run name hiding a partial lane selection": (
+        TOP,
+        "inputs.lanes != '' && format(' lanes {0}', inputs.lanes) || ''",
+        "''",
+        "must name the selected lanes unit",
+    ),
+    "the run name naming lanes on a full run": (
+        TOP,
+        "inputs.lanes != '' && format(' lanes {0}', inputs.lanes) || ''",
+        "format(' lanes {0}', inputs.lanes)",
+        "must not name lanes when every lane runs",
+    ),
+    "the run name with the lanes after the retest marker": (
+        TOP,
+        "format('sim-gate {0} {1} from {2}{3}{4}'",
+        "format('sim-gate {0} {1} from {2}{4}{3}'",
+        "must end with ' retest of 7 (Retest)'",
+    ),
+    "the retest stand-in on a push trigger": (
+        RETEST,
+        "on:\n  workflow_dispatch:",
+        "on:\n  push:\n  workflow_dispatch:",
+        "sim-retest.yml: must be workflow_dispatch only",
+    ),
+    "the retest stand-in on workflow_run": (
+        RETEST,
+        "on:\n  workflow_dispatch:",
+        "on:\n  workflow_run:\n    workflows: [sim-gate]\n  workflow_dispatch:",
+        "sim-retest.yml: forbidden trigger workflow_run",
+    ),
+    "the retest stand-in stub asking for actions write": (
+        RETEST,
+        "    timeout-minutes: 1\n",
+        "    timeout-minutes: 1\n    permissions:\n      contents: read\n      actions: read\n",
+        "sim-retest.yml: job requeue permissions are",
+    ),
+    "the gate job given actions read": (
+        TOP,
+        "    if: ${{ always() }}\n    runs-on: ubuntu-24.04\n",
+        "    if: ${{ always() }}\n    permissions:\n      contents: read\n      actions: read\n    runs-on: ubuntu-24.04\n",
+        "sim-gate.yml: job gate permissions are",
+    ),
+    "the classify job without checks read": (
+        ATTEMPT,
+        "      contents: read\n      actions: read\n      checks: read\n    outputs:\n      verdict:",
+        "      contents: read\n      actions: read\n    outputs:\n      verdict:",
+        "job classify permissions are",
+    ),
+    "the tailnet join without a step timeout": (
+        ATTEMPT,
+        "        continue-on-error: true\n        timeout-minutes: 3\n",
+        "        continue-on-error: true\n",
+        "the tailnet join step needs timeout-minutes of 5 or less",
+    ),
+    "the tailnet join with a step timeout above the cap": (
+        ATTEMPT,
+        "        continue-on-error: true\n        timeout-minutes: 3\n",
+        "        continue-on-error: true\n        timeout-minutes: 10\n",
+        "the tailnet join step needs timeout-minutes of 5 or less",
     ),
     "lane without the retry reason output": (
         LANE,
@@ -364,33 +555,93 @@ MUTATIONS = {
     ),
     "hygiene step deleted": (
         ATTEMPT,
-        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh\n",
-        "",
+        "      - name: Hygiene\n",
+        "      - name: Cleanup\n",
         "has no Hygiene step",
     ),
     "hygiene step only on hosted runners": (
         ATTEMPT,
-        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh",
-        "        if: ${{ runner.environment == 'github-hosted' }}\n        run: sh core/prejob.sh",
-        "self-hosted runners only",
+        HYGIENE,
+        HYGIENE.replace("'self-hosted'", "'github-hosted'"),
+        "Hygiene step must run on self-hosted runners only",
     ),
     "hygiene step without a guard": (
         ATTEMPT,
-        "        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh",
-        "        run: sh core/prejob.sh",
-        "self-hosted runners only",
+        HYGIENE,
+        HYGIENE.replace("        if: ${{ runner.environment == 'self-hosted' }}\n", ""),
+        "Hygiene step must run on self-hosted runners only",
     ),
-    "hygiene step running something else": (
+    "hygiene step running the head tree copy": (
         ATTEMPT,
-        "        run: sh core/prejob.sh",
-        "        run: echo skipped",
-        "must run sh core/prejob.sh",
+        "              sh .sim-trusted/core/prejob.sh || status=$?\n",
+        "              sh core/prejob.sh || status=$?\n",
+        "must run the trusted copy exactly",
+    ),
+    "hygiene step back to the head tree one-liner": (
+        ATTEMPT,
+        "        run: |\n          set -u\n          status=0\n          if [ -L .sim-trusted ]",
+        "        run: sh core/prejob.sh\n        shell: |\n          set -u\n          status=0\n          if [ -L .sim-trusted ]",
+        "must run the trusted copy exactly",
+    ),
+    "hygiene step keeping the trusted copy in the workspace": (
+        ATTEMPT,
+        "          rm -rf .sim-trusted\n",
+        "",
+        "must run the trusted copy exactly",
+    ),
+    "hygiene step skipping the dispatch commit check": (
+        ATTEMPT,
+        ' || [ "$(git -C .sim-trusted rev-parse HEAD)" != "$GITHUB_SHA" ]',
+        "",
+        "must run the trusted copy exactly",
+    ),
+    "hygiene step trusting a directory that is not its own checkout": (
+        ATTEMPT,
+        " || [ ! -d .sim-trusted/.git ]",
+        "",
+        "must run the trusted copy exactly",
+    ),
+    "hygiene step with core survivor names gone": (
+        ATTEMPT,
+        "          SIM_SURVIVORS: dotnet testhost vstest.console VBCSCompiler\n",
+        "          SIM_SURVIVORS: node\n",
+        "must pass exactly SIM_SURVIVORS",
     ),
     "hygiene step after the first dotnet step": (
         ATTEMPT,
-        "      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh\n      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n",
-        "      - name: Set up .NET\n        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0\n        with:\n          global-json-file: sim/dotnet/global.json\n      - name: Hygiene\n        if: ${{ runner.environment == 'self-hosted' }}\n        run: sh core/prejob.sh\n",
+        HYGIENE,
+        "      - name: Health\n        run: echo early\n" + HYGIENE,
         "must come before",
+    ),
+    "the trusted checkout pinned to the head": (
+        ATTEMPT,
+        "          path: .sim-trusted\n",
+        "          ref: ${{ inputs.head }}\n          path: .sim-trusted\n",
+        "the trusted checkout must not take a ref",
+    ),
+    "the trusted checkout keeping credentials": (
+        ATTEMPT,
+        "          path: .sim-trusted\n          persist-credentials: false\n",
+        "          path: .sim-trusted\n          persist-credentials: true\n",
+        "the trusted checkout must be actions/checkout with exactly",
+    ),
+    "the trusted checkout of the whole tree": (
+        ATTEMPT,
+        "          sparse-checkout: core\n",
+        "",
+        "the trusted checkout must be actions/checkout with exactly",
+    ),
+    "the trusted checkout deleted": (
+        ATTEMPT,
+        "      - name: Checkout trusted\n",
+        "      - name: Checkout spare\n",
+        "has no Checkout trusted step",
+    ),
+    "the trusted checkout on hosted runners too": (
+        ATTEMPT,
+        TRUSTED,
+        "      - name: Checkout trusted\n",
+        "the trusted checkout must run on self-hosted runners only",
     ),
     "retry still runs after a cache tripwire": (
         LANE,
@@ -546,7 +797,7 @@ MUTATIONS = {
         ATTEMPT,
         'sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"',
         "echo build",
-        "Build step must go through sh adapters/dotnet/cache_build.sh build",
+        "Build step must run exactly the pinned script",
     ),
     "the cache tripwire step removed": (
         ATTEMPT,
@@ -558,7 +809,7 @@ MUTATIONS = {
         ATTEMPT,
         'run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"',
         "run: echo clear",
-        "must run sh adapters/dotnet/cache_build.sh tripwire",
+        "cache tripwire step must run exactly",
     ),
     "the cache tripwire step before the plan": (
         ATTEMPT,
@@ -570,25 +821,43 @@ MUTATIONS = {
         ATTEMPT,
         'run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"',
         "run: echo save",
-        "must only run sh adapters/dotnet/cache_build.sh save",
+        "writer key must run exactly",
     ),
     "the build step calling the cache script at a stale path": (
         ATTEMPT,
         'sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt"',
         'sh old/cache_build.sh build "$RUNNER_TEMP/build.txt"',
-        "Build step must go through sh adapters/dotnet/cache_build.sh build",
+        "Build step must run exactly the pinned script",
     ),
     "the cache tripwire step calling the cache script at a stale path": (
         ATTEMPT,
         'run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"',
         'run: sh old/cache_build.sh tripwire "$MARKERS"',
-        "must run sh adapters/dotnet/cache_build.sh tripwire",
+        "cache tripwire step must run exactly",
     ),
     "the save step calling the cache script at a stale path": (
         ATTEMPT,
         'run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"',
         'run: sh old/cache_build.sh save "$RUNNER_TEMP/built.txt"',
-        "must only run sh adapters/dotnet/cache_build.sh save",
+        "writer key must run exactly",
+    ),
+    "the save step with a command appended": (
+        ATTEMPT,
+        'run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"',
+        'run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"; env > "$RUNNER_TEMP/leak.txt"',
+        "writer key must run exactly",
+    ),
+    "the cache tripwire step with a command appended": (
+        ATTEMPT,
+        'run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"',
+        'run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS" || true',
+        "cache tripwire step must run exactly",
+    ),
+    "the build step with a command appended": (
+        ATTEMPT,
+        '          touch "$MARKERS/build"\n',
+        '          touch "$MARKERS/build"\n          rm -rf "$MARKERS"\n',
+        "Build step must run exactly the pinned script",
     ),
     "the save step without the default branch name for the tip check": (
         ATTEMPT,
@@ -723,7 +992,7 @@ MUTATIONS = {
 def copy(tmp_path):
     target = tmp_path / "workflows"
     target.mkdir()
-    for path in WORKFLOWS.glob("sim-gate*.yml"):
+    for path in WORKFLOWS.glob("*.yml"):
         shutil.copy(path, target / path.name)
     return target
 
@@ -929,3 +1198,76 @@ def test_ci_shellchecks_the_hook_and_every_sim_gate_script():
     assert {".githooks/pre-push", "core/*.sh", "adapters/dotnet/*.sh"} <= set(shellcheck[0][1:])
     assert {path.name for path in (WORKFLOWS.parents[1] / "core").glob("*.sh")} >= {"kill_own_runner.sh", "prejob.sh", "resolve_refs.sh"}
     assert {path.name for path in (WORKFLOWS.parents[1] / "adapters" / "dotnet").glob("*.sh")} >= {"cache_build.sh"}
+
+
+CI_STEP = "      - name: Run tests\n        run: python -m pytest\n"
+
+
+def test_the_trusted_checkout_before_the_head_checkout_is_refused(copy):
+    text = (copy / ATTEMPT).read_text(encoding="utf-8")
+    start = text.index("      - name: Checkout trusted\n")
+    block = text[start:text.index("      - name: Hygiene\n")]
+    mutate(copy, ATTEMPT, block, "")
+    mutate(copy, ATTEMPT, "      - name: Checkout\n", block + "      - name: Checkout\n")
+    assert any("must come after the head checkout" in line for line in policy.violations(copy))
+
+
+@pytest.mark.parametrize(
+    "filename, old, new, expected",
+    [
+        ("ci.yml", CI_STEP, CI_STEP + "        env:\n          K: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}\n", "ci.yml: names the cache writer key"),
+        ("ci.yml", CI_STEP, CI_STEP + "        env:\n          K: ${{ secrets.sim_cache_write_secret }}\n", "ci.yml: names the cache writer key"),
+        ("ci.yml", "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: sim-cache-write\n", "ci.yml: names the cache writer key"),
+        ("ci.yml", "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment:\n      name: SIM-CACHE-WRITE\n", "ci.yml: names the cache writer key"),
+        ("ci.yml", "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: \"sim-cache-\\x77rite\"\n", "ci.yml: YAML escape sequences are refused"),
+        ("ci.yml", "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: sim-route\n", "ci.yml: environment at jobs.test.environment is not in the environment allowlist"),
+        ("ci.yml", CI_STEP, CI_STEP + "        env:\n          ALL: ${{ toJSON(secrets) }}\n", "ci.yml: the secrets context may only be read by name"),
+        ("trial-gate.yml", "          JOB: ${{ toJSON(matrix) }}\n", "          JOB: ${{ secrets[format('SIM_CACHE_{0}_SECRET', 'WRITE')] }}\n", "the secrets context may only be read by name"),
+        ("ci.yml", "        run: python -m pytest\n", "        run: python -m pytest ${{ github.event.pull_request.title }}\n", "ci.yml: expression inside run"),
+        (LANE, "    environment: sim-route\n", "    environment: sim-cache-write\n", "the cache writer key or environment is named at jobs.route.environment"),
+        (ATTEMPT, "          KILL_RUNNER: ${{ inputs.kill_runner }}\n", "          KILL_RUNNER: ${{ inputs.kill_runner }}\n          SIM_CACHE_WRITE_SECRET: ${{ secrets.SIM_CACHE_WRITE_SECRET }}\n", "the cache writer key or environment is named at jobs.run.steps"),
+    ],
+)
+def test_every_workflow_file_is_scanned_for_the_writer_tier_and_whole_secrets_reads(copy, filename, old, new, expected):
+    mutate(copy, filename, old, new)
+    found = policy.violations(copy)
+    assert any(expected in line for line in found), found
+
+
+def test_a_workflow_file_outside_the_policy_is_refused(copy):
+    (copy / "extra.yaml").write_text("name: extra\non:\n  push:\npermissions:\n  contents: read\njobs: {}\n".replace("jobs: {}", "jobs:\n  x:\n    runs-on: ubuntu-24.04\n"), encoding="utf-8")
+    assert any("a new workflow needs a policy entry" in line for line in policy.violations(copy))
+
+
+def test_a_workflow_the_policy_cannot_read_is_refused(copy):
+    mutate(copy, "ci.yml", "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    env: {A: b}\n")
+    assert any("ci.yml: the policy cannot read this workflow" in line for line in policy.violations(copy))
+
+
+def test_every_shipped_invocation_resolves_and_the_scan_sees_the_known_ones():
+    assert policy.invocation_violations(WORKFLOWS, ROOT) == []
+
+
+@pytest.mark.parametrize(
+    "filename, old, new, expected",
+    [
+        (TOP, "          python3 -m core.gate \"$@\"\n", "          python3 -m core.gates \"$@\"\n", "python -m core.gates does not resolve"),
+        (LANE, "python3 -m core.route", "python3 -m core.route_old", "python -m core.route_old does not resolve"),
+        (LANE, "python3 -m core.route", "python3 -m tools.sim_gate.route", "python -m tools.sim_gate.route does not resolve"),
+        (ATTEMPT, '          python3 -m adapters.dotnet.plan "$@" --lane "$LANE" --emit build', '          python3 \\\n              -m adapters.dotnet.planx "$@" --lane "$LANE" --emit build', "python -m adapters.dotnet.planx does not resolve"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: sh tools/sim_gate/resolve_refs.sh\n", "tools/sim_gate/resolve_refs.sh does not resolve"),
+        (ATTEMPT, "              sh .sim-trusted/core/prejob.sh || status=$?\n", "              sh .sim-trusted/core/prejob_old.sh || status=$?\n", ".sim-trusted/core/prejob_old.sh does not resolve"),
+        (ATTEMPT, 'sh "$GITHUB_WORKSPACE/core/kill_own_runner.sh"', 'bash "$GITHUB_WORKSPACE/core/kill_runner.sh"', "core/kill_runner.sh does not resolve"),
+        (ATTEMPT, 'sh "$GITHUB_WORKSPACE/core/kill_own_runner.sh"', '"$GITHUB_WORKSPACE/core/kill_own_runner.sh" && ./core/missing.sh', "./core/missing.sh does not resolve"),
+        ("trial-gate.yml", "python3 -m workload run", "python3 workload/missing.py run", "workload/missing.py does not resolve"),
+        (TOP, "    uses: ./.github/workflows/sim-gate-lane.yml", "    uses: ./.github/workflows/sim-gate-lanes.yml", "uses ./.github/workflows/sim-gate-lanes.yml, which does not exist"),
+        (LANE, "python3 -m core.route", "python3 -c 'import core.route'", "no workflow runs python -m core.route"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: cat core/resolve_refs.sh\n", "no workflow runs core/resolve_refs.sh"),
+        (LANE, "python3 -m core.route", "python3 -I -m core.nothere", "python -m core.nothere does not resolve"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: . core/nothere.sh\n", "core/nothere.sh does not resolve"),
+    ],
+)
+def test_an_invocation_that_does_not_resolve_at_the_head_is_refused(copy, filename, old, new, expected):
+    mutate(copy, filename, old, new)
+    found = policy.invocation_violations(copy, ROOT)
+    assert any(expected in line for line in found), found

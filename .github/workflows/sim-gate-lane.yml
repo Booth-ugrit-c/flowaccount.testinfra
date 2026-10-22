@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      cache:
+        description: use or off
+        required: false
+        default: "use"
+        type: string
       fail_test:
         required: false
         default: false
@@ -93,6 +98,7 @@ jobs:
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
       default_tip: ${{ inputs.default_tip }}
+      cache: ${{ inputs.cache }}
       runner: ${{ needs.route.outputs.target == 'onprem' && inputs.lab_label || 'ubuntu-24.04' }}
       hosted: ${{ needs.route.outputs.target != 'onprem' || inputs.lab_label == '' }}
       fail_test: ${{ inputs.fail_test }}
@@ -116,6 +122,7 @@ jobs:
       base: ${{ inputs.base }}
       head: ${{ inputs.head }}
       default_tip: ${{ inputs.default_tip }}
+      cache: ${{ inputs.cache }}
       runner: ubuntu-24.04
       hosted: true
       fail_test: ${{ inputs.fail_test }}

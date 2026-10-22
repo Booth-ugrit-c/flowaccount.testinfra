@@ -79,7 +79,53 @@ def test_every_fixture_has_an_expectation():
 
 @pytest.mark.parametrize("case", sorted(EXPECTED))
 def test_verdict_per_fixture(tmp_path, case):
-    assert classify.classify_dir(case_dir(tmp_path, case)) == EXPECTED[case]
+    assert classify.classify_dir(case_dir(tmp_path, case), extra_infra_steps=DOTNET_SETUP) == EXPECTED[case]
+
+
+DOTNET_SETUP = ("Set up .NET",)
+
+
+def test_core_names_no_language_setup_step_as_infra():
+    assert classify.INFRA_STEPS == ("Set up job", "Checkout trusted", "Hygiene", "Health", "Services")
+
+
+def test_a_failed_trusted_checkout_before_hygiene_is_infra(tmp_path):
+    steps = [
+        {"name": "Set up job", "conclusion": "success"},
+        {"name": "Checkout", "conclusion": "success"},
+        {"name": "Checkout trusted", "conclusion": "failure"},
+        {"name": "Hygiene", "conclusion": "skipped"},
+        {"name": "Test", "conclusion": "skipped"},
+    ]
+    job = {"conclusion": "failure", "steps": steps}
+    assert classify.classify(set(), job, "", [], run_result="failure") == "infra"
+    assert classify.classify(set(), job, "", [], run_result="failure", infra_steps=("Set up job", "Hygiene")) == "test"
+
+
+def test_an_adapter_setup_failure_is_test_unless_the_adapter_names_it(tmp_path):
+    job = case_dir(tmp_path, "setup_dotnet_failure")
+    assert classify.classify_dir(job) == "test"
+    assert classify.classify_dir(job, extra_infra_steps=DOTNET_SETUP) == "infra"
+    assert classify.classify_dir(job, extra_infra_steps=("Set up Node",)) == "test"
+
+
+def test_cli_takes_the_adapter_setup_step_as_infra(tmp_path):
+    job = case_dir(tmp_path, "setup_dotnet_failure")
+    assert run_cli(job).stdout == "test\n"
+    assert run_cli(job, args=["--infra-step", "Set up .NET"]).stdout == "infra\n"
+    assert run_cli(job, args=["--infra-step", "Set up Node", "--infra-step", "Set up .NET"]).stdout == "infra\n"
+
+
+def test_cli_ignores_an_infra_step_name_outside_the_charset_and_says_so(tmp_path):
+    out = run_cli(case_dir(tmp_path, "setup_dotnet_failure"), args=["--infra-step", "Set up .NET\n"])
+    assert out.stdout == "test\n"
+    assert "an infra step name that is the Test step or outside" in out.stderr
+
+
+def test_cli_never_takes_the_test_step_as_an_infra_step(tmp_path):
+    out = run_cli(case_dir(tmp_path, "test_step_failed_no_end_no_fingerprint"), args=["--infra-step", "Test"])
+    assert out.stdout == "test\n"
+    assert "an infra step name that is the Test step" in out.stderr
 
 
 def test_markers_directory_may_exist_and_be_empty(tmp_path):
