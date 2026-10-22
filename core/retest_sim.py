@@ -29,10 +29,8 @@ def wait_for_run(base, repository, token, run_id, wait, poll, sleep, clock):
         run = call_json("GET", f"{base}/repos/{repository}/actions/runs/{run_id}", token)
         if not isinstance(run, dict):
             raise Refused("run")
-        if run.get("status") == "completed":
+        if run.get("status") == "completed" or clock() >= deadline:
             return run
-        if clock() >= deadline:
-            raise NoDispatch(f"run {run_id} not completed within {wait:g}s")
         sleep(poll)
 
 
@@ -57,7 +55,7 @@ def check_run(run, run_id, workflow):
         raise NoDispatch("run is not from the workflow")
     if run.get("event") != "workflow_dispatch":
         raise NoDispatch("run was not dispatched")
-    if run.get("conclusion") != "failure":
+    if run.get("status") == "completed" and run.get("conclusion") != "failure":
         raise NoDispatch(f"run conclusion is {run.get('conclusion')!r:.40}")
     text(run.get("head_sha"), SHA, "head_sha")
     text(run.get("created_at"), TIMESTAMP, "created_at")

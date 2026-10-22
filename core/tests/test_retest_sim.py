@@ -332,12 +332,19 @@ def test_an_api_error_prints_the_reason_and_never_dispatches(github, capsys, pre
     no_dispatch(github, capsys, "HTTPError 500")
 
 
-def test_never_dispatches_when_the_run_does_not_complete_in_time(github, capsys):
-    github.runs["100"] = [make_run(status="in_progress")]
-    out = run_tool(capsys, wait="0.3", poll="0.05")
-    assert github.dispatches() == []
-    assert "not completed within 0.3s" in out
+def test_a_run_object_still_in_progress_after_the_wait_is_advisory(github, capsys):
+    github.runs["100"] = [make_run(status="in_progress", conclusion=None)]
+    run_tool(capsys, wait="0.3", poll="0.05")
     assert len(github.polls("100")) >= 3
+    assert len(github.dispatches()) == 1
+
+
+def test_a_lagging_run_object_never_stands_in_for_the_gate_job(github, capsys):
+    github.runs["100"] = [make_run(status="in_progress", conclusion=None)]
+    github.jobs["100"] = [gate_jobs("success")]
+    out = run_tool(capsys, wait="0.1", poll="0.05")
+    assert github.dispatches() == []
+    assert "gate result" in out
 
 
 def test_waits_for_the_run_to_complete_then_dispatches(github, capsys):
