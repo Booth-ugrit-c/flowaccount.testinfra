@@ -1,0 +1,16 @@
+{
+  "name": "sim-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "libs/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "jest": "30.5.2",
+    "nx": "23.3.0"
+  }
+}
