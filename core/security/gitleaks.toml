@@ -1,0 +1,7 @@
+title = "synthetic secrets for the sim gate"
+
+[[rules]]
+id = "sim-fake-token"
+description = "Synthetic SIMFAKE token"
+regex = '''SIMFAKE-[0-9a-f]{32}'''
+keywords = ["simfake"]

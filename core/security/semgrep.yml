@@ -1,0 +1,16 @@
+rules:
+  - id: sim-python-eval
+    languages: [python]
+    severity: ERROR
+    message: "Synthetic rule: eval runs arbitrary code"
+    pattern: eval(...)
+  - id: sim-python-shell-true
+    languages: [python]
+    severity: ERROR
+    message: "Synthetic rule: subprocess call with shell=True"
+    pattern: subprocess.$FUNC(..., shell=True, ...)
+  - id: sim-javascript-eval
+    languages: [javascript]
+    severity: ERROR
+    message: "Synthetic rule: eval runs arbitrary code"
+    pattern: eval(...)
