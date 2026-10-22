@@ -64,7 +64,7 @@ else:
                 kind = kind[0]
             path = norm(item.get("path", "")) if isinstance(item, dict) else ""
             lines.append(f"semgrep error {kind} {path}".rstrip())
-        out(f"error semgrep reported {len(data["errors"])} errors", lines)
+        out(f"error semgrep reported {len(lines)} errors", lines)
     paths = data.get("paths")
     scanned = paths.get("scanned") if isinstance(paths, dict) else None
     if not isinstance(scanned, list):
