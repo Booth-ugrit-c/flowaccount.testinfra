@@ -115,3 +115,5 @@ jobs:
         run: zizmor --config .github/zizmor.yml .github/workflows
       - name: shellcheck
         run: shellcheck .githooks/pre-push core/*.sh tools/sim_gate/*.sh
+      - name: Policy and layering tests
+        run: python -m pytest -q core/tests/test_workflow_policy.py core/tests/test_layering.py

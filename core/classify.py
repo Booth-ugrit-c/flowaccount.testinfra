@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -24,6 +25,9 @@ TIMEOUT_TEXT = "exceeded the maximum execution time"
 CANCEL_TEXT = "the operation was canceled"
 ANNOTATIONS_OK = "annotations.ok"
 MAX_PAGES = 5
+JOB_WAIT_SECONDS = 45
+clock = time.monotonic
+sleep = time.sleep
 
 
 def load_fingerprints(path=FINGERPRINTS):
@@ -119,7 +123,39 @@ def request_json(url, token):
     return json.loads(request(url, token))
 
 
+def settled(job):
+    return job.get("status") == "completed" and job.get("conclusion") is not None
+
+
+def shown(value):
+    if value is None:
+        return "null"
+    return value if isinstance(value, str) and re.fullmatch(r"[a-z_]{1,32}", value) else "other"
+
+
 def find_job(base, repository, env, token, suffix):
+    job = fetch_job_once(base, repository, env, token, suffix)
+    if settled(job):
+        return job
+    print(
+        f"classify: job not final (status={shown(job.get('status'))} conclusion={shown(job.get('conclusion'))}),"
+        f" re-reading for up to {JOB_WAIT_SECONDS}s",
+        file=sys.stderr,
+    )
+    start, delay = clock(), 1
+    while not settled(job):
+        remaining = start + JOB_WAIT_SECONDS - clock()
+        if remaining <= 0:
+            print(f"classify: job still not final after {JOB_WAIT_SECONDS}s, classifying it as read", file=sys.stderr)
+            return job
+        sleep(min(delay, remaining))
+        delay = min(delay * 2, 8)
+        job = fetch_job_once(base, repository, env, token, suffix)
+    print(f"classify: job final after {clock() - start:.0f}s", file=sys.stderr)
+    return job
+
+
+def fetch_job_once(base, repository, env, token, suffix):
     run_id, attempt = env["GITHUB_RUN_ID"], env["GITHUB_RUN_ATTEMPT"]
     if not (run_id.isdigit() and attempt.isdigit()):
         raise ValueError("run")
