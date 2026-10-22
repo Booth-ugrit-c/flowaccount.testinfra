@@ -71,8 +71,16 @@ def retest_lanes(state):
 def already_retested(base, repository, token, workflow, branch, run):
     query = f"branch={quote(branch, safe='')}&event=workflow_dispatch&per_page=100&created=%3E%3D{run['created_at']}"
     listing = call_json("GET", f"{base}/repos/{repository}/actions/workflows/{workflow}/runs?{query}", token)
+    runs = listing["workflow_runs"]
+    if not isinstance(runs, list) or listing.get("total_count") != len(runs):
+        raise NoDispatch("run listing incomplete")
     pattern = re.compile(rf"\bretest of {run['id']}\b", re.IGNORECASE)
-    return any(isinstance(r, dict) and pattern.search(str(r.get("display_title", ""))) for r in listing["workflow_runs"])
+    return any(isinstance(r, dict) and pattern.search(str(r.get("display_title", ""))) for r in runs)
+
+
+def branch_tip(base, repository, token, branch):
+    document = call_json("GET", f"{base}/repos/{repository}/branches/{quote(branch, safe='')}", token)
+    return text(document["commit"]["sha"], SHA, "branch tip")
 
 
 def run(env, run_id, workflow, wait, poll, sleep=time.sleep, clock=time.monotonic):
@@ -89,7 +97,9 @@ def run(env, run_id, workflow, wait, poll, sleep=time.sleep, clock=time.monotoni
     lanes = retest_lanes(state)
     inputs = state["inputs"]
     if inputs["pr_sha"] != gate_run["head_sha"]:
-        raise NoDispatch("head moved or differs from the dispatch ref")
+        raise NoDispatch("verdict commit differs from the run commit")
+    if branch_tip(base, repository, token, branch) != gate_run["head_sha"]:
+        raise NoDispatch("head moved")
     if already_retested(base, repository, token, workflow, branch, gate_run):
         raise NoDispatch(f"run {run_id} already has a retest")
     payload = {

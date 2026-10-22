@@ -299,6 +299,7 @@ def test_the_token_is_sent_only_as_a_bearer_header(github, tmp_path, capsys):
         {"run_url": f"{SERVER}/{REPO}/actions/runs/200\nx"},
         {"pr": "7 "},
         {"pr": "0"},
+        {"pr": "8"},
     ],
 )
 def test_bad_arguments_are_refused_before_any_write(github, tmp_path, kwargs):

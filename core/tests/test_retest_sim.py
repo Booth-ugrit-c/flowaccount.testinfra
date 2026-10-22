@@ -38,6 +38,8 @@ class FakeGitHub:
         self.artifacts = {}
         self.listings = {}
         self.workflow_runs = []
+        self.workflow_total = None
+        self.tips = {}
         self.fail = {}
         self.requests = []
         parent = self
@@ -85,7 +87,12 @@ class FakeGitHub:
         if path == DISPATCH and method == "POST":
             return 204, b"", {}
         if path == f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs":
-            return 200, json.dumps({"total_count": len(self.workflow_runs), "workflow_runs": self.workflow_runs}).encode(), {}
+            total = len(self.workflow_runs) if self.workflow_total is None else self.workflow_total
+            return 200, json.dumps({"total_count": total, "workflow_runs": self.workflow_runs}).encode(), {}
+        if match := re.fullmatch(rf"/repos/{REPO}/branches/([^/]+)", path):
+            if match.group(1) not in self.tips:
+                return 404, b"{}", {}
+            return 200, json.dumps({"name": match.group(1), "commit": {"sha": self.tips[match.group(1)]}}).encode(), {}
         if match := re.fullmatch(rf"/repos/{REPO}/actions/runs/(\d+)", path):
             sequence = self.runs.get(match.group(1))
             if not sequence:
@@ -166,6 +173,7 @@ def github(monkeypatch):
         monkeypatch.setenv("GITHUB_API_URL", fake.url)
         fake.runs["100"] = [make_run()]
         fake.artifacts["100"] = zipped(make_state())
+        fake.tips["feature-a"] = SHA_A
         yield fake
 
 
@@ -254,7 +262,7 @@ def test_never_dispatches_when_retest_lanes_leave_out_an_infra_lane(github, caps
     no_dispatch(github, capsys, "retest_lanes disagree")
 
 
-@pytest.mark.parametrize("prefix", [f"/repos/{REPO}/actions/runs/100/artifacts", f"/repos/{REPO}/actions/runs/100", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs"])
+@pytest.mark.parametrize("prefix", [f"/repos/{REPO}/actions/runs/100/artifacts", f"/repos/{REPO}/actions/runs/100", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs", f"/repos/{REPO}/branches/feature-a"])
 def test_an_api_error_prints_the_reason_and_never_dispatches(github, capsys, prefix):
     github.fail[("GET", prefix)] = 500
     no_dispatch(github, capsys, "HTTPError 500")
@@ -285,14 +293,34 @@ def test_ref_comes_from_the_run_api_not_from_the_artifact(github, capsys):
     assert dispatch["inputs"]["pr_branch"] == "feature-a"
 
 
-def test_never_dispatches_when_the_head_moved(github, capsys):
+def test_never_dispatches_when_the_verdict_commit_differs_from_the_run(github, capsys):
     github.runs["100"] = [make_run(head_sha=SHA_B)]
+    github.tips["feature-a"] = SHA_B
+    no_dispatch(github, capsys, "verdict commit differs")
+
+
+def test_never_dispatches_when_the_branch_tip_moved(github, capsys):
+    github.tips["feature-a"] = SHA_B
     no_dispatch(github, capsys, "head moved")
+
+
+def test_a_branch_with_a_slash_is_looked_up_encoded(github, capsys):
+    github.runs["100"] = [make_run(head_branch="team/feature-a")]
+    github.tips["team%2Ffeature-a"] = SHA_A
+    run_tool(capsys)
+    assert [d["ref"] for d in github.dispatches()] == ["team/feature-a"]
+
+
+def test_never_dispatches_when_the_run_listing_is_incomplete(github, capsys):
+    github.workflow_total = 101
+    no_dispatch(github, capsys, "run listing incomplete")
 
 
 def test_never_dispatches_twice_for_the_same_run(github, capsys):
     github.workflow_runs = [{"id": 101, "display_title": "sim-gate dotnet feature-a retest of 100 (Retest)"}]
     no_dispatch(github, capsys, "already has a retest")
+    [listing] = [parse_qs(urlsplit(p).query) for m, p, _, _ in github.requests if m == "GET" and p.startswith(f"/repos/{REPO}/actions/workflows/")]
+    assert listing["branch"] == ["feature-a"] and listing["event"] == ["workflow_dispatch"]
 
 
 def test_a_retest_of_another_run_does_not_block(github, capsys):

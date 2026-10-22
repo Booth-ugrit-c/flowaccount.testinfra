@@ -255,6 +255,8 @@ def upsert(env, pr, marker, state_path, run_url):
         state = parse_state(handle.read(MAX_STATE_BYTES + 1))
     if marker != f"sim-gate:{state['stack']}":
         raise Refused("marker")
+    if pr != state["inputs"]["pr_number"]:
+        raise Refused("pr")
     prior, note = (None, "")
     if state["retest_of"]:
         prior, note = prior_state(base, repository, token, state)
