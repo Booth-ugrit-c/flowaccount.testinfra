@@ -11,6 +11,7 @@ PINNED = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$")
 BUDGET_MINUTES = 80
 MAX_ATTEMPT_MINUTES = 30
 DOTNET_GLOBAL_JSON = "sim/dotnet/global.json"
+CACHE_BUILD = "adapters/dotnet/cache_build.sh"
 
 
 class Unsupported(ValueError):
@@ -441,12 +442,12 @@ def cache_wiring_violations(docs):
                 found.append("the cache save step never runs on the default branch with fail_test off")
             if step.get("env", {}).get("SIM_DEFAULT_BRANCH") != "${{ github.event.repository.default_branch }}":
                 found.append("the save step must pass the default branch name from github.event.repository.default_branch")
-            if "cache_build.sh save" not in str(step.get("run", "")):
-                found.append("the step holding the cache writer key must only run cache_build.sh save")
+            if f"sh {CACHE_BUILD} save" not in str(step.get("run", "")):
+                found.append(f"the step holding the cache writer key must only run sh {CACHE_BUILD} save")
     if "Cache tripwire" not in names or "Build" not in names or names.index("Cache tripwire") > names.index("Build"):
         found.append("the cache tripwire step must come before the Build step")
-    elif "cache_build.sh tripwire" not in str(steps[names.index("Cache tripwire")].get("run", "")):
-        found.append("the cache tripwire step must run cache_build.sh tripwire")
+    elif f"sh {CACHE_BUILD} tripwire" not in str(steps[names.index("Cache tripwire")].get("run", "")):
+        found.append(f"the cache tripwire step must run sh {CACHE_BUILD} tripwire")
     for early in ("Health", "Services", "Affected", "Plan"):
         if early in names and "Cache tripwire" in names and names.index(early) > names.index("Cache tripwire"):
             found.append(f"the cache tripwire step must come after {early}")
@@ -464,8 +465,8 @@ def cache_wiring_violations(docs):
         found.append("the cache tripwire step must pass SIM_TAILNET_JOIN: ${{ steps.join.outcome }}")
     found += full_plan_violations(steps, names)
     build = steps[names.index("Build")] if "Build" in names else {}
-    if "cache_build.sh build" not in str(build.get("run", "")):
-        found.append("the Build step must go through cache_build.sh build")
+    if f"sh {CACHE_BUILD} build" not in str(build.get("run", "")):
+        found.append(f"the Build step must go through sh {CACHE_BUILD} build")
     for name, doc in docs.items():
         for job_id, job in doc["jobs"].items():
             for step in job.get("steps", []):

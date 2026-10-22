@@ -234,7 +234,7 @@ def read_projects(head: str, root: str, cwd: Path) -> dict:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m tools.sim_gate.affected")
+    parser = argparse.ArgumentParser(prog="python -m adapters.dotnet.affected")
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--root", default=DEFAULT_ROOT)
@@ -246,7 +246,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     for flag, ref in (("--base", args.base), ("--head", args.head)):
         if ref.startswith("-"):
-            print(f"sim_gate.affected: {flag} {ref!r} must not start with '-'", file=sys.stderr)
+            print(f"dotnet.affected: {flag} {ref!r} must not start with '-'", file=sys.stderr)
             return 2
     cwd = Path.cwd()
     try:
@@ -256,7 +256,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         graph = build_graph(files)
         result = select(graph, changed_files(args.base, args.head, cwd), args.root)
     except (GraphError, GitError) as exc:
-        print(f"sim_gate.affected: {exc}", file=sys.stderr)
+        print(f"dotnet.affected: {exc}", file=sys.stderr)
         return 2
     if args.names:
         result = {key: [graph[path].name for path in paths] for key, paths in result.items()}

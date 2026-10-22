@@ -544,33 +544,51 @@ MUTATIONS = {
     ),
     "the build step not going through the cache script": (
         ATTEMPT,
-        'sh tools/sim_gate/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"',
+        'sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"',
         "echo build",
-        "Build step must go through cache_build.sh build",
+        "Build step must go through sh adapters/dotnet/cache_build.sh build",
     ),
     "the cache tripwire step removed": (
         ATTEMPT,
-        '      - name: Cache tripwire\n        env:\n          SIM_TAILNET_JOIN: ${{ steps.join.outcome }}\n          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}\n        run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"\n',
+        '      - name: Cache tripwire\n        env:\n          SIM_TAILNET_JOIN: ${{ steps.join.outcome }}\n          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}\n        run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"\n',
         "",
         "tripwire step must come before the Build step",
     ),
     "the cache tripwire step running something else": (
         ATTEMPT,
-        'run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"',
+        'run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"',
         "run: echo clear",
-        "must run cache_build.sh tripwire",
+        "must run sh adapters/dotnet/cache_build.sh tripwire",
     ),
     "the cache tripwire step before the plan": (
         ATTEMPT,
         "      - name: Plan\n",
-        "      - name: Cache tripwire\n        run: sh tools/sim_gate/cache_build.sh tripwire \"$MARKERS\"\n      - name: Plan\n",
+        "      - name: Cache tripwire\n        run: sh adapters/dotnet/cache_build.sh tripwire \"$MARKERS\"\n      - name: Plan\n",
         "tripwire step must come after Plan",
     ),
     "the save step running something else": (
         ATTEMPT,
-        'run: sh tools/sim_gate/cache_build.sh save "$RUNNER_TEMP/built.txt"',
+        'run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"',
         "run: echo save",
-        "must only run cache_build.sh save",
+        "must only run sh adapters/dotnet/cache_build.sh save",
+    ),
+    "the build step calling the cache script at a stale path": (
+        ATTEMPT,
+        'sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt"',
+        'sh old/cache_build.sh build "$RUNNER_TEMP/build.txt"',
+        "Build step must go through sh adapters/dotnet/cache_build.sh build",
+    ),
+    "the cache tripwire step calling the cache script at a stale path": (
+        ATTEMPT,
+        'run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"',
+        'run: sh old/cache_build.sh tripwire "$MARKERS"',
+        "must run sh adapters/dotnet/cache_build.sh tripwire",
+    ),
+    "the save step calling the cache script at a stale path": (
+        ATTEMPT,
+        'run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"',
+        'run: sh old/cache_build.sh save "$RUNNER_TEMP/built.txt"',
+        "must only run sh adapters/dotnet/cache_build.sh save",
     ),
     "the save step without the default branch name for the tip check": (
         ATTEMPT,
@@ -908,6 +926,6 @@ def test_ci_shellchecks_the_hook_and_every_sim_gate_script():
     runs = [str(step.get("run", "")).split() for step in jobs["workflow-lint"]["steps"]]
     shellcheck = [words for words in runs if words[:1] == ["shellcheck"]]
     assert len(shellcheck) == 1, runs
-    assert {".githooks/pre-push", "core/*.sh", "tools/sim_gate/*.sh"} <= set(shellcheck[0][1:])
+    assert {".githooks/pre-push", "core/*.sh", "adapters/dotnet/*.sh"} <= set(shellcheck[0][1:])
     assert {path.name for path in (WORKFLOWS.parents[1] / "core").glob("*.sh")} >= {"kill_own_runner.sh", "prejob.sh", "resolve_refs.sh"}
-    assert {path.name for path in (WORKFLOWS.parents[1] / "tools" / "sim_gate").glob("*.sh")} >= {"cache_build.sh"}
+    assert {path.name for path in (WORKFLOWS.parents[1] / "adapters" / "dotnet").glob("*.sh")} >= {"cache_build.sh"}

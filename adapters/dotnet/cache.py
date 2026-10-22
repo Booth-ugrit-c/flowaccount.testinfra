@@ -2,40 +2,27 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
-import http.client
 import json
 import os
 import posixpath
-import re
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
-import time
 import zlib
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
-from urllib.parse import quote, urlsplit
+from typing import Optional, Sequence
 
-from tools.sim_gate import affected
+from adapters.dotnet import affected
+from core import store as client
 
-CACHE_BUCKET = "sim-cache"
-CONTROL_BUCKET = "sim-control"
-TRIPWIRE_OBJECT = "tripwire"
-TRIPWIRE_MARKER = "cache-tripwire"
 OUTPUT_DIRS = ("bin", "obj")
-DEFAULT_REGION = "us-east-1"
-DEFAULT_TIMEOUT = 60.0
-MAX_ARCHIVE_BYTES = 1 << 30
 MAX_EXTRACTED_BYTES = 4 << 30
 MAX_MEMBERS = 200_000
 CHUNK = 1 << 16
 KEY_FORMAT = 2
-KEY_ID = re.compile(r"[A-Za-z0-9._~+/=-]{1,128}")
 STAGING_PREFIX = ".sim-cache-"
 
 
@@ -43,125 +30,8 @@ class CacheError(Exception):
     pass
 
 
-class StoreError(Exception):
-    def __init__(self, reason: str):
-        super().__init__(reason)
-        self.reason = reason
-
-
 class ArchiveError(Exception):
     pass
-
-
-def _hmac(key: bytes, message: str) -> bytes:
-    return hmac.new(key, message.encode("utf-8"), hashlib.sha256).digest()
-
-
-def sign(method: str, path: str, headers: Mapping[str, str], payload_hash: str, key_id: str, secret: str,
-         region: str, query: str = "") -> str:
-    normalized = {name.lower(): " ".join(value.split()) for name, value in headers.items()}
-    names = sorted(normalized)
-    amz_date = normalized["x-amz-date"]
-    day = amz_date[:8]
-    canonical = "\n".join([
-        method, path, query, *(f"{name}:{normalized[name]}" for name in names), "", ";".join(names), payload_hash,
-    ])
-    scope = f"{day}/{region}/s3/aws4_request"
-    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode("utf-8")).hexdigest()])
-    derived = _hmac(("AWS4" + secret).encode("utf-8"), day)
-    for part in (region, "s3", "aws4_request"):
-        derived = _hmac(derived, part)
-    signature = hmac.new(derived, to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
-    return (f"AWS4-HMAC-SHA256 Credential={key_id}/{scope}, SignedHeaders={';'.join(names)}, "
-            f"Signature={signature}")
-
-
-class Store:
-    def __init__(self, endpoint: str, key_id: str, secret: str, region: str, timeout: float):
-        try:
-            parts = urlsplit(endpoint)
-            port = parts.port
-        except ValueError:
-            raise StoreError("bad endpoint") from None
-        if (parts.scheme not in ("http", "https") or not parts.hostname or parts.username is not None
-                or parts.password is not None or parts.path.strip("/") or parts.query or parts.fragment):
-            raise StoreError("bad endpoint")
-        self.secure = parts.scheme == "https"
-        self.hostname = parts.hostname
-        self.port = port
-        bracketed = f"[{self.hostname}]" if ":" in self.hostname else self.hostname
-        self.host = f"{bracketed}:{port}" if port else bracketed
-        self.key_id, self.secret, self.region, self.timeout = key_id, secret, region, timeout
-
-    def get(self, bucket: str, name: str, sink: Optional[Path] = None) -> int:
-        return self._exchange("GET", bucket, name, b"", sink)
-
-    def put(self, bucket: str, name: str, body: bytes) -> int:
-        return self._exchange("PUT", bucket, name, body, None)
-
-    def _exchange(self, method: str, bucket: str, name: str, body: bytes, sink: Optional[Path]) -> int:
-        path = quote(f"/{bucket}/{name}", safe="/~")
-        payload_hash = hashlib.sha256(body).hexdigest()
-        headers = {
-            "host": self.host,
-            "x-amz-content-sha256": payload_hash,
-            "x-amz-date": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
-        }
-        deadline = time.monotonic() + self.timeout
-        factory = http.client.HTTPSConnection if self.secure else http.client.HTTPConnection
-        connection = factory(self.hostname, self.port, timeout=self.timeout)
-        try:
-            headers["authorization"] = sign(method, path, headers, payload_hash, self.key_id, self.secret, self.region)
-            connection.request(method, path, body=body or None, headers=headers)
-            response = connection.getresponse()
-            if sink is not None and response.status == 200:
-                self._stream(response, connection, sink, deadline)
-            return response.status
-        except StoreError:
-            raise
-        except TimeoutError:
-            raise StoreError("timeout") from None
-        except (http.client.HTTPException, ValueError):
-            raise StoreError("protocol error") from None
-        except OSError:
-            raise StoreError("unreachable") from None
-        finally:
-            connection.close()
-
-    @staticmethod
-    def _stream(response, connection, sink: Path, deadline: float) -> None:
-        total = 0
-        with open(sink, "wb") as out:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError
-                if connection.sock is not None:
-                    connection.sock.settimeout(remaining)
-                chunk = response.read(CHUNK)
-                if not chunk:
-                    return
-                total += len(chunk)
-                if total > MAX_ARCHIVE_BYTES:
-                    raise StoreError("archive too large")
-                out.write(chunk)
-
-
-def _credentials(role: str) -> Optional[tuple]:
-    key_id = os.environ.get(f"SIM_CACHE_{role}_KEY_ID", "")
-    secret = os.environ.get(f"SIM_CACHE_{role}_SECRET", "")
-    return (key_id, secret) if KEY_ID.fullmatch(key_id) and secret else None
-
-
-def _open_store(role: str, timeout: float) -> Store:
-    credentials = _credentials(role)
-    if credentials is None:
-        raise StoreError("no reader key" if role == "READ" else "no writer key")
-    endpoint = os.environ.get("SIM_CACHE_ENDPOINT", "")
-    if not endpoint:
-        raise StoreError("no endpoint")
-    region = os.environ.get("SIM_CACHE_REGION") or DEFAULT_REGION
-    return Store(endpoint, credentials[0], credentials[1], region, timeout)
 
 
 def _git(args: Sequence[str], cwd: Path) -> bytes:
@@ -372,7 +242,7 @@ def command_restore(args) -> int:
         staged = work / "staged"
         staged.mkdir()
         try:
-            status = _open_store("READ", args.timeout).get(CACHE_BUCKET, f"{key}.tar.gz", archive)
+            status = client.open_store("READ", args.timeout).get(client.CACHE_BUCKET, f"{key}.tar.gz", archive)
             if status == 404:
                 return _miss()
             if status != 200:
@@ -381,7 +251,7 @@ def command_restore(args) -> int:
             present = [name for name in OUTPUT_DIRS if (staged / name).is_dir()]
             if not present:
                 raise ArchiveError("empty archive")
-        except StoreError as exc:
+        except client.StoreError as exc:
             return _miss(exc.reason)
         except (ArchiveError, tarfile.TarError, EOFError, zlib.error, OSError):
             return _miss("unusable archive")
@@ -398,19 +268,19 @@ def command_restore(args) -> int:
 
 def command_save(args) -> int:
     project, key = _project_key(args)
-    if _credentials("WRITE") is None:
+    if client.credentials("WRITE") is None:
         print("skip: no writer key")
         return 0
     work = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=project.parent))
     try:
         archive = work / "archive.tar.gz"
         try:
-            store = _open_store("WRITE", args.timeout)
+            store = client.open_store("WRITE", args.timeout)
             build_archive(project.parent, archive)
-            if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+            if archive.stat().st_size > client.MAX_ARCHIVE_BYTES:
                 raise ArchiveError("archive too large")
-            status = store.put(CACHE_BUCKET, f"{key}.tar.gz", archive.read_bytes())
-        except StoreError as exc:
+            status = store.put(client.CACHE_BUCKET, f"{key}.tar.gz", archive.read_bytes())
+        except client.StoreError as exc:
             print(f"skip: {exc.reason}", file=sys.stderr)
             return 0
         except (ArchiveError, OSError) as exc:
@@ -426,24 +296,6 @@ def command_save(args) -> int:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def command_tripwire(args) -> int:
-    try:
-        status = _open_store("READ", args.timeout).get(CONTROL_BUCKET, TRIPWIRE_OBJECT)
-    except StoreError as exc:
-        print(f"tripwire: {exc.reason}", file=sys.stderr)
-        return 0
-    if status == 200:
-        markers = Path(args.markers)
-        markers.mkdir(parents=True, exist_ok=True)
-        (markers / TRIPWIRE_MARKER).write_text("cache tripwire\n", encoding="utf-8")
-        print("tripped")
-    elif status == 404:
-        print("clear")
-    else:
-        print(f"tripwire: http {status}", file=sys.stderr)
-    return 0
-
-
 def command_key(args) -> int:
     print(_project_key(args)[1])
     return 0
@@ -451,7 +303,7 @@ def command_key(args) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m tools.sim_gate.cache",
+        prog="python -m adapters.dotnet.cache",
         description=(
             "Per-project build cache. The key is a sha256 over the project's tracked files as they are in the "
             "working tree (what the build compiles, so an uncommitted edit changes the key), the keys of its "
@@ -472,8 +324,7 @@ def _parser() -> argparse.ArgumentParser:
     common.add_argument("--config", default="Release", help="build configuration (default: %(default)s)")
     common.add_argument("--sdk", help="SDK version for the key (default: dotnet --version in the root)")
     timed = argparse.ArgumentParser(add_help=False)
-    timed.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
-                       help="seconds one store request may take (default: %(default)s)")
+    client.add_timeout(timed)
     sub.add_parser("key", parents=[common], help="print the content key of a project").set_defaults(run=command_key)
     sub.add_parser(
         "restore", parents=[common, timed],
@@ -490,14 +341,7 @@ def _parser() -> argparse.ArgumentParser:
                      "SIM_CACHE_WRITE_KEY_ID and SIM_CACHE_WRITE_SECRET; without both it prints "
                      "'skip: no writer key' and sends nothing. Store problems are skips (exit 0)."),
     ).set_defaults(run=command_save)
-    trip = sub.add_parser(
-        "tripwire", parents=[timed], help="write the cache-tripwire marker when the store reports a trip",
-        description=("GET sim-control/tripwire with the reader key. Present: write MARKERS/cache-tripwire. "
-                     "Absent, or the store unreachable: write nothing (a store that is down is a miss, "
-                     "not a trip)."),
-    )
-    trip.add_argument("--markers", required=True, help="directory that receives the marker file")
-    trip.set_defaults(run=command_tripwire)
+    client.add_tripwire(sub)
     return parser
 
 
@@ -506,7 +350,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         return args.run(args)
     except CacheError as exc:
-        print(f"sim_gate.cache: {exc}", file=sys.stderr)
+        print(f"dotnet.cache: {exc}", file=sys.stderr)
         return 2
 
 

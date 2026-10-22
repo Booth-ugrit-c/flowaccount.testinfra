@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.sim_gate import affected
+from adapters.dotnet import affected
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROOT = "sim/dotnet"

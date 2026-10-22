@@ -122,7 +122,7 @@ jobs:
         env:
           BASE_REF: ${{ inputs.base }}
           HEAD_REF: ${{ inputs.head }}
-        run: python3 -m tools.sim_gate.affected --base "$BASE_REF" --head "$HEAD_REF" > "$RUNNER_TEMP/affected.json"
+        run: python3 -m adapters.dotnet.affected --base "$BASE_REF" --head "$HEAD_REF" > "$RUNNER_TEMP/affected.json"
       - name: Plan
         env:
           LANE: ${{ inputs.lane }}
@@ -134,8 +134,8 @@ jobs:
           else
               set -- --affected "$RUNNER_TEMP/affected.json"
           fi
-          python3 -m tools.sim_gate.plan "$@" --lane "$LANE" --emit build > "$RUNNER_TEMP/build.txt"
-          python3 -m tools.sim_gate.plan "$@" --lane "$LANE" --emit test > "$RUNNER_TEMP/test.txt"
+          python3 -m adapters.dotnet.plan "$@" --lane "$LANE" --emit build > "$RUNNER_TEMP/build.txt"
+          python3 -m adapters.dotnet.plan "$@" --lane "$LANE" --emit test > "$RUNNER_TEMP/test.txt"
       - name: Join the tailnet
         id: join
         if: ${{ runner.environment == 'github-hosted' }}
@@ -154,7 +154,7 @@ jobs:
           SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
           SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}
           SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}
-        run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"
+        run: sh adapters/dotnet/cache_build.sh tripwire "$MARKERS"
       - name: Build
         env:
           FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}
@@ -177,7 +177,7 @@ jobs:
                       '    public void Asserts_the_wrong_value() => Assert.Equal(2, 1);' '}' > "$(dirname "$GITHUB_WORKSPACE/$project")/ForcedFailure.cs"
               fi
           fi
-          sh tools/sim_gate/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"
+          sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"
           touch "$MARKERS/build"
       - name: Test
         working-directory: sim/dotnet
@@ -214,7 +214,7 @@ jobs:
           SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
           SIM_CACHE_WRITE_KEY_ID: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}
           SIM_CACHE_WRITE_SECRET: ${{ secrets.SIM_CACHE_WRITE_SECRET }}
-        run: sh tools/sim_gate/cache_build.sh save "$RUNNER_TEMP/built.txt"
+        run: sh adapters/dotnet/cache_build.sh save "$RUNNER_TEMP/built.txt"
       - name: Remove services
         if: ${{ always() && inputs.lane == 'integration' }}
         env:
