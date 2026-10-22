@@ -34,7 +34,9 @@ MAX_ARCHIVE_BYTES = 1 << 30
 MAX_EXTRACTED_BYTES = 4 << 30
 MAX_MEMBERS = 200_000
 CHUNK = 1 << 16
-KEY_FORMAT = 1
+KEY_FORMAT = 2
+KEY_ID = re.compile(r"[A-Za-z0-9._~+/=-]{1,128}")
+STAGING_PREFIX = ".sim-cache-"
 
 
 class CacheError(Exception):
@@ -119,7 +121,7 @@ class Store:
             raise
         except TimeoutError:
             raise StoreError("timeout") from None
-        except http.client.HTTPException:
+        except (http.client.HTTPException, ValueError):
             raise StoreError("protocol error") from None
         except OSError:
             raise StoreError("unreachable") from None
@@ -148,7 +150,7 @@ class Store:
 def _credentials(role: str) -> Optional[tuple]:
     key_id = os.environ.get(f"SIM_CACHE_{role}_KEY_ID", "")
     secret = os.environ.get(f"SIM_CACHE_{role}_SECRET", "")
-    return (key_id, secret) if key_id and secret else None
+    return (key_id, secret) if KEY_ID.fullmatch(key_id) and secret else None
 
 
 def _open_store(role: str, timeout: float) -> Store:
@@ -193,15 +195,14 @@ def _under(path: str, directory: str) -> bool:
 
 
 def _file_digest(path: Path) -> Optional[str]:
-    digest = hashlib.sha256()
     if path.is_symlink():
-        digest.update(b"link\0" + os.readlink(path).encode("utf-8", "surrogateescape"))
-    elif path.is_file():
-        with open(path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(CHUNK), b""):
-                digest.update(chunk)
-    else:
+        raise CacheError(f"{path.name} is a symlink; a link into another project would not be tracked")
+    if not path.is_file():
         return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -235,26 +236,29 @@ def compute_keys(cwd: Path, root: str, config: str, sdk: str) -> dict:
             digests[name] = _file_digest(top / name)
         return digests[name]
 
-    wide = sorted(
-        [name, digest(name)] for name in listing
+    shared = {
+        name: digest(name) for name in listing
         if affected._is_build_wide(posixpath.basename(name))
         and (name in under_root or posixpath.dirname(name) in ancestors)
-        and digest(name) is not None
-    )
+    }
     by_directory = {}
     for path, project in graph.items():
         by_directory.setdefault(project.directory, []).append(path)
     owned = {path: [] for path in graph}
     for name in under_root:
         directory = posixpath.dirname(name)
+        claimed = False
         while True:
             for path in by_directory.get(directory, ()):
-                inner = name[len(directory) + 1:] if directory else name
-                if not _in_output(inner) and digest(name) is not None:
+                claimed = True
+                if digest(name) is not None:
                     owned[path].append([name, digest(name)])
             if not directory:
                 break
             directory = posixpath.dirname(directory)
+        if not claimed and not affected._is_inert(posixpath.basename(name)):
+            shared[name] = digest(name)
+    wide = sorted([name, value] for name, value in shared.items() if value is not None)
 
     keys = {}
     for path in order:
@@ -342,9 +346,11 @@ def build_archive(project_dir: Path, destination: Path) -> None:
             found = True
             for current, directories, files in os.walk(base):
                 for entry in directories + files:
-                    mode = os.lstat(os.path.join(current, entry)).st_mode
-                    if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                    info = os.lstat(os.path.join(current, entry))
+                    if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
                         raise ArchiveError("non-regular file in bin or obj")
+                    if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+                        raise ArchiveError("hard-linked file in bin or obj")
             tar.add(base, arcname=name, filter=scrub)
     if not found:
         raise ArchiveError("no bin or obj to save")
@@ -360,7 +366,9 @@ def _miss(reason: Optional[str] = None) -> int:
 def command_restore(args) -> int:
     project, key = _project_key(args)
     project_dir = project.parent
-    work = Path(tempfile.mkdtemp(prefix=".sim-cache-", dir=project_dir))
+    for leftover in project_dir.glob(STAGING_PREFIX + "*"):
+        shutil.rmtree(leftover, ignore_errors=True)
+    work = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=project_dir))
     try:
         archive = work / "archive.tar.gz"
         staged = work / "staged"
@@ -395,7 +403,7 @@ def command_save(args) -> int:
     if _credentials("WRITE") is None:
         print("skip: no writer key")
         return 0
-    work = Path(tempfile.mkdtemp(prefix=".sim-cache-", dir=project.parent))
+    work = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=project.parent))
     try:
         archive = work / "archive.tar.gz"
         try:
@@ -449,10 +457,14 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Per-project build cache. The key is a sha256 over the project's tracked files as they are in the "
             "working tree (what the build compiles, so an uncommitted edit changes the key), the keys of its "
-            "ProjectReferences, every build-wide file under the root and in its ancestors, the SDK version and "
+            "ProjectReferences, every build-wide file under the root and in its ancestors, every other tracked "
+            "non-inert file under the root that no project owns, the SDK version and "
             "the configuration. Untracked files and bin/obj never enter the key. Credentials come from the "
             "environment only: SIM_CACHE_ENDPOINT, SIM_CACHE_READ_KEY_ID, SIM_CACHE_READ_SECRET, "
-            "SIM_CACHE_WRITE_KEY_ID, SIM_CACHE_WRITE_SECRET, SIM_CACHE_REGION (default us-east-1)."
+            "SIM_CACHE_WRITE_KEY_ID, SIM_CACHE_WRITE_SECRET, SIM_CACHE_REGION (default us-east-1). A plain http:// "
+            "endpoint is acceptable only over an encrypted overlay (tailnet) or an isolated lab segment. "
+            "Restore removes leftover .sim-cache-* staging directories in the project, so run one restore or "
+            "save per project at a time."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

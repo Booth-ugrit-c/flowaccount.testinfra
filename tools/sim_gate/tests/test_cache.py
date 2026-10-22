@@ -674,3 +674,86 @@ def test_help_documents_the_save_precondition():
     flat = " ".join(proc.stdout.split())
     assert proc.returncode == 0
     assert "successful build" in flat and "SIM_CACHE_WRITE_KEY_ID" in flat
+
+
+@pytest.mark.parametrize("relative", ["sim/dotnet/.editorconfig", "sim/dotnet/src/Shared.cs"])
+def test_unowned_tracked_file_under_the_root_changes_every_key(repo, relative):
+    before = keys_of(repo)
+    edit(repo, relative, FIXTURE["files"][relative] + "\ndotnet_diagnostic.CS0168.severity = error")
+    after = keys_of(repo)
+    assert {p for p in ALL_PROJECTS if before[p] != after[p]} == ALL_PROJECTS
+
+
+def test_inert_unowned_file_leaves_every_key(repo):
+    before = keys_of(repo)
+    edit(repo, "sim/dotnet/NOTES.md", "changed notes")
+    assert keys_of(repo) == before
+
+
+def test_tracked_symlink_under_the_root_is_refused(repo):
+    try:
+        os.symlink("../Utils/Stamp.cs", repo / "sim/dotnet/src/Core/Alias.cs")
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "link")
+    with pytest.raises(cache.CacheError):
+        keys_of(repo)
+
+
+def test_save_refuses_a_hard_link_out_of_the_project(monkeypatch, capsys, repo, store):
+    configure(monkeypatch, store.endpoint, writer=True)
+    build_output(repo)
+    try:
+        os.link(repo / "sim/dotnet/src/Utils/Stamp.cs", project_dir(repo) / "bin" / "Release" / "foreign.cs")
+    except OSError:
+        pytest.skip("hard links unavailable")
+    code, out, err = save(monkeypatch, capsys, repo)
+    assert code == 0 and out.strip() == "" and err.startswith("skip: ")
+    assert store.requests == []
+
+
+def test_restore_removes_stale_staging_directories(monkeypatch, capsys, repo, store):
+    configure(monkeypatch, store.endpoint)
+    stale = project_dir(repo) / ".sim-cache-leftover"
+    (stale / "previous-obj").mkdir(parents=True)
+    (stale / "previous-obj" / "x.cache").write_bytes(b"x")
+    code, out, _ = restore(monkeypatch, capsys, repo)
+    assert (code, out.strip()) == (0, "miss")
+    assert snapshot(project_dir(repo)) == ["Core.csproj", "Stamp.cs"]
+
+
+@pytest.mark.parametrize("command", ["restore", "tripwire"])
+def test_key_id_with_a_newline_is_no_credential_and_never_a_traceback(monkeypatch, capsys, repo, store, tmp_path, command):
+    configure(monkeypatch, store.endpoint)
+    monkeypatch.setenv("SIM_CACHE_READ_KEY_ID", "KEYID\n")
+    if command == "restore":
+        code, out, err = restore(monkeypatch, capsys, repo)
+        assert (code, out.strip()) == (0, "miss")
+    else:
+        monkeypatch.chdir(tmp_path)
+        assert cache.main(["tripwire", "--markers", str(tmp_path / "m")]) == 0
+        captured = capsys.readouterr()
+        err = captured.err
+        assert not (tmp_path / "m" / "cache-tripwire").exists()
+    assert "no reader key" in err
+    assert "KEYID" not in err and "Signature=" not in err and "Traceback" not in err
+    assert store.requests == []
+
+
+def test_write_key_id_with_a_newline_is_no_writer_key(monkeypatch, capsys, repo, store):
+    configure(monkeypatch, store.endpoint, writer=True)
+    monkeypatch.setenv("SIM_CACHE_WRITE_KEY_ID", "KEYID\n")
+    build_output(repo)
+    code, out, err = save(monkeypatch, capsys, repo)
+    assert (code, out.strip()) == (0, "skip: no writer key")
+    assert "KEYID" not in err and store.requests == []
+
+
+def test_a_header_the_http_layer_rejects_is_a_miss_without_the_signature(monkeypatch, capsys, repo, store):
+    configure(monkeypatch, store.endpoint)
+    monkeypatch.setenv("SIM_CACHE_REGION", "us-east-1\n")
+    code, out, err = restore(monkeypatch, capsys, repo)
+    assert (code, out.strip()) == (0, "miss")
+    assert err.startswith("miss: ") and "Signature=" not in err and "Traceback" not in err
+    assert store.requests == []
