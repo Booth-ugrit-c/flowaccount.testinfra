@@ -427,6 +427,18 @@ MUTATIONS = {
         "run: echo save",
         "must only run cache_build.sh save",
     ),
+    "the save step without the default branch name for the tip check": (
+        ATTEMPT,
+        "          SIM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",
+        "",
+        "must pass the default branch name",
+    ),
+    "the save step taking the tip name from an input": (
+        ATTEMPT,
+        "          SIM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",
+        "          SIM_DEFAULT_BRANCH: ${{ inputs.head }}\n",
+        "must pass the default branch name",
+    ),
     "environment on the attempt job": (
         ATTEMPT,
         "    runs-on: ${{ inputs.runner }}\n    timeout-minutes: 25",
@@ -571,7 +583,10 @@ def test_expression_evaluator_refuses_what_it_does_not_model(expression):
         policy.evaluate(expression, {})
 
 
-SAVE_GUARD = "        if: ${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == false }}\n"
+SAVE_GUARD = (
+    "        if: ${{ github.ref_name == github.event.repository.default_branch"
+    " && inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}\n"
+)
 
 
 def with_save_guard(copy, guard):
@@ -579,7 +594,11 @@ def with_save_guard(copy, guard):
 
 
 def test_the_bare_form_of_the_save_guard_is_accepted_too(copy):
-    with_save_guard(copy, "github.ref_name == github.event.repository.default_branch && inputs.fail_test == false")
+    with_save_guard(
+        copy,
+        "github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch"
+        " && inputs.fail_test == false",
+    )
     assert policy.violations(copy) == []
 
 
@@ -587,11 +606,17 @@ def test_the_bare_form_of_the_save_guard_is_accepted_too(copy):
     "guard, message",
     [
         (None, "must itself be gated on the default branch"),
+        ("${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == false }}", "must itself be gated on the default branch"),
+        ("${{ inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}", "must itself be gated on the default branch"),
+        ("${{ github.ref_name == github.event.repository.default_branch && inputs.head != '' && inputs.fail_test == false }}", "must itself be gated on the default branch"),
         ("${{ github.ref_name != '' && inputs.fail_test == false }}", "must itself be gated on the default branch"),
         ("${{ always() }}", "must itself be gated on the default branch"),
         ("${{ github.ref_name != github.event.repository.default_branch }}", "must itself be gated on the default branch"),
         ("${{ github.event_name == 'workflow_dispatch' }}", "must itself be gated on the default branch"),
-        ("${{ github.ref_name == github.event.repository.default_branch }}", "must not run when fail_test is on"),
+        (
+            "${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch }}",
+            "must not run when fail_test is on",
+        ),
         ("${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == true }}", "must itself be gated on the default branch"),
     ],
 )

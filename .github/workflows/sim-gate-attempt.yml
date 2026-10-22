@@ -180,8 +180,9 @@ jobs:
           touch "$MARKERS/test-end"
           exit "$status"
       - name: Save cache
-        if: ${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == false }}
+        if: ${{ github.ref_name == github.event.repository.default_branch && inputs.head == github.event.repository.default_branch && inputs.fail_test == false }}
         env:
+          SIM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}
           SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
           SIM_CACHE_WRITE_KEY_ID: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}

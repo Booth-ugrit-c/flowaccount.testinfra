@@ -69,6 +69,16 @@ case $mode in
         built=${2:?usage: cache_build.sh save BUILT_FILE}
         [ "${SIM_CACHE_MODE:-use}" != off ] || exit 0
         [ -s "$built" ] || exit 0
+        branch=${SIM_DEFAULT_BRANCH:-}
+        case $branch in
+            '' | -* | *[!A-Za-z0-9._/-]* | *..*) tip= ;;
+            *) tip=$(git rev-parse --verify --quiet "refs/remotes/origin/$branch" || true) ;;
+        esac
+        head=$(git rev-parse --verify --quiet HEAD || true)
+        if [ -z "$tip" ] || [ "$tip" != "$head" ]; then
+            echo "skip: not the default branch tip"
+            exit 0
+        fi
         dirty=$(git status --porcelain --untracked-files=all | grep -Ev '^.. (.*/)?(bin|obj)/' || true)
         if [ -n "$dirty" ]; then
             echo "cache: no save, the tree has untracked or modified files outside bin and obj"

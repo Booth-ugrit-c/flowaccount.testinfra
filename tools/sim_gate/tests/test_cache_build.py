@@ -74,6 +74,8 @@ class Lab:
         subprocess.run([*git, "init", "-q"], cwd=self.workspace, check=True)
         subprocess.run([*git, "add", "-A"], cwd=self.workspace, check=True)
         subprocess.run([*git, "commit", "-q", "-m", "fixture"], cwd=self.workspace, check=True)
+        self.git = git
+        subprocess.run([*git, "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=self.workspace, check=True)
 
     def table(self, rows):
         (self.t / "cache.table").write_bytes("".join(f"{r}\n" for r in rows).encode())
@@ -86,6 +88,7 @@ class Lab:
             SIM_DOTNET=(self.t / "dotnet").as_posix(),
             GITHUB_WORKSPACE=self.workspace.as_posix(),
             RUNNER_ENVIRONMENT="self-hosted",
+            SIM_DEFAULT_BRANCH="main",
             SIM_CACHE_ENDPOINT_LAB=ENDPOINT_LAB,
             SIM_CACHE_ENDPOINT_TAILNET=ENDPOINT_TAILNET,
         )
@@ -246,6 +249,7 @@ def test_a_modified_tracked_file_stops_the_save(lab):
 def test_build_output_alone_does_not_stop_the_save_even_when_it_is_not_ignored(lab):
     (lab.workspace / "sim" / "dotnet" / ".gitignore").write_text("")
     subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qam", "unignore"], cwd=lab.workspace, check=True)
+    subprocess.run([*lab.git, "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=lab.workspace, check=True)
     for name in ("bin", "obj"):
         (lab.workspace / "sim" / "dotnet" / "src" / "Core" / name).mkdir(parents=True)
         (lab.workspace / "sim" / "dotnet" / "src" / "Core" / name / "x.dll").write_text("x")
@@ -282,3 +286,50 @@ def test_a_missing_built_list_saves_nothing(lab):
 @pytest.mark.parametrize("args", [[], ["nonsense"], ["build"], ["save"]])
 def test_bad_usage_fails(lab, args):
     assert lab.run(*args).returncode != 0
+
+
+def advance_head(lab):
+    (lab.workspace / "sim" / "dotnet" / "src" / "Next.cs").write_text("x")
+    subprocess.run([*lab.git, "add", "-A"], cwd=lab.workspace, check=True)
+    subprocess.run([*lab.git, "commit", "-q", "-m", "ahead"], cwd=lab.workspace, check=True)
+
+
+def test_a_checkout_that_is_not_the_default_branch_tip_is_never_saved(lab):
+    advance_head(lab)
+    result = lab.run("save", lab.write_built(CORE))
+    assert result.returncode == 0
+    assert lab.cache_calls() == []
+    assert "skip: not the default branch tip" in result.stdout + result.stderr
+
+
+def test_a_checkout_that_is_the_default_branch_tip_is_saved(lab):
+    advance_head(lab)
+    subprocess.run([*lab.git, "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=lab.workspace, check=True)
+    lab.table(["save Core saved 0"])
+    assert lab.run("save", lab.write_built(CORE)).returncode == 0
+    assert lab.cache_calls() == ["save Core"]
+
+
+def test_a_missing_remote_tracking_ref_means_no_save(lab):
+    subprocess.run([*lab.git, "update-ref", "-d", "refs/remotes/origin/main"], cwd=lab.workspace, check=True)
+    result = lab.run("save", lab.write_built(CORE))
+    assert result.returncode == 0 and lab.cache_calls() == []
+    assert "skip: not the default branch tip" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("branch", [None, "", "other", "ma in", "-main", "main;x", "../main"])
+def test_the_default_branch_must_be_named_and_safe(lab, branch):
+    if branch and branch != "other":
+        subprocess.run([*lab.git, "update-ref", f"refs/remotes/origin/{branch}", "HEAD"], cwd=lab.workspace, capture_output=True)
+    result = lab.run("save", lab.write_built(CORE), SIM_DEFAULT_BRANCH=branch)
+    assert result.returncode == 0 and lab.cache_calls() == []
+    assert "skip: not the default branch tip" in result.stdout + result.stderr
+
+
+def test_a_branch_tip_elsewhere_does_not_authorise_the_save(lab):
+    advance_head(lab)
+    subprocess.run([*lab.git, "update-ref", "refs/remotes/origin/topic", "HEAD"], cwd=lab.workspace, check=True)
+    result = lab.run("save", lab.write_built(CORE), SIM_DEFAULT_BRANCH="topic")
+    assert lab.cache_calls() == ["save Core"]
+    result = lab.run("save", lab.write_built(CORE))
+    assert lab.cache_calls() == ["save Core"]

@@ -306,9 +306,15 @@ def secret_violations(docs):
 
 
 def default_branch_only(guard):
-    default_branch = {"github.ref_name": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": False}
-    other_branch = {"github.ref_name": "topic", "github.event.repository.default_branch": "main", "inputs.fail_test": False}
-    return truthy(evaluate(condition(guard), default_branch)) and not truthy(evaluate(condition(guard), other_branch))
+    base = {"github.event.repository.default_branch": "main", "inputs.fail_test": False}
+    default_branch = dict(base, **{"github.ref_name": "main", "inputs.head": "main"})
+    other_ref = dict(base, **{"github.ref_name": "topic", "inputs.head": "main"})
+    other_head = dict(base, **{"github.ref_name": "main", "inputs.head": "topic"})
+    return (
+        truthy(evaluate(condition(guard), default_branch))
+        and not truthy(evaluate(condition(guard), other_ref))
+        and not truthy(evaluate(condition(guard), other_head))
+    )
 
 
 def hosted_only(guard):
@@ -330,10 +336,12 @@ def cache_wiring_violations(docs):
             guard = step.get("if")
             if guard is None or not default_branch_only(str(guard)):
                 found.append("a step reading the cache writer key must itself be gated on the default branch")
-            elif truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": True})):
+            elif truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "inputs.head": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": True})):
                 found.append("the cache save step must not run when fail_test is on")
-            elif not truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": False})):
+            elif not truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "inputs.head": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": False})):
                 found.append("the cache save step never runs on the default branch with fail_test off")
+            if step.get("env", {}).get("SIM_DEFAULT_BRANCH") != "${{ github.event.repository.default_branch }}":
+                found.append("the save step must pass the default branch name from github.event.repository.default_branch")
             if "cache_build.sh save" not in str(step.get("run", "")):
                 found.append("the step holding the cache writer key must only run cache_build.sh save")
     if "Cache tripwire" not in names or "Build" not in names or names.index("Cache tripwire") > names.index("Build"):
