@@ -177,6 +177,25 @@ def test_a_full_plan_keeps_dependency_order():
     assert plan_.index(SUPPORT) < plan_.index(CORE_TESTS)
 
 
+def test_the_all_lane_builds_an_integration_only_dependency_in_dependency_order(tmp_path):
+    proc = run(tmp_path, {"build": [], "test": [CORE_TESTS, API_INTEGRATION]}, "all", "build")
+    built = lines(proc)
+    assert set(built) == {CORE, SUPPORT, CORE_TESTS, DATA, UTILS, SERVICE, API, API_INTEGRATION}
+    assert API not in lines(run(tmp_path, {"build": [], "test": [CORE_TESTS, API_INTEGRATION]}, "unit", "build"))
+    assert built.index(CORE) < built.index(DATA) < built.index(SERVICE) < built.index(API) < built.index(API_INTEGRATION)
+    assert built.index(UTILS) < built.index(SERVICE)
+    assert built.index(SUPPORT) < min(built.index(CORE_TESTS), built.index(API_INTEGRATION))
+
+
+def test_the_all_lane_also_builds_an_affected_project_that_no_test_depends_on(tmp_path):
+    assert OTHER in lines(run(tmp_path, {"build": [OTHER], "test": [API_INTEGRATION]}, "all", "build"))
+
+
+def test_the_all_lane_tests_every_selected_test_project():
+    assert set(lines(run_all("all", "test"))) == {CORE_TESTS, OTHER_TESTS, SERVICE_TESTS, API_INTEGRATION}
+    assert set(lines(run_all("all", "build"))) == {CORE, DATA, UTILS, OTHER, SERVICE, API, SUPPORT, CORE_TESTS, OTHER_TESTS, SERVICE_TESTS, API_INTEGRATION}
+
+
 def test_the_full_plan_and_an_affected_file_are_exclusive(tmp_path):
     path = tmp_path / "affected.json"
     path.write_text(json.dumps({"build": [], "test": []}), encoding="utf-8")

@@ -1,0 +1,286 @@
+name: tpl-dotnet-lane
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Pull request number, digits or empty
+        required: false
+        default: ""
+        type: string
+      pr_branch:
+        description: Branch that holds the change
+        required: true
+        type: string
+      pr_author:
+        description: Login of the pull request author, or empty
+        required: false
+        default: ""
+        type: string
+      pr_sha:
+        description: Commit the build job built, a full SHA resolved by the caller
+        required: true
+        type: string
+      base_sha:
+        description: Base commit of the affected selection, a full SHA resolved by the caller
+        required: true
+        type: string
+      default_tip:
+        description: True only when the caller resolved pr_sha to the default branch tip on a dispatch from the default branch
+        required: false
+        default: false
+        type: boolean
+      lanes:
+        description: Comma-separated lanes the caller runs; empty means every lane
+        required: false
+        default: ""
+        type: string
+      runner_label:
+        description: Opaque runner label; it is printed unmasked in public logs, so never a host name
+        required: false
+        default: ""
+        type: string
+      cache:
+        description: use or off
+        required: false
+        default: "use"
+        type: string
+      retest:
+        description: True when this run retests an earlier one
+        required: false
+        default: false
+        type: boolean
+      sim_fault:
+        description: Lab fault to inject, empty outside the lab
+        required: false
+        default: ""
+        type: string
+      lane:
+        description: unit or integration
+        required: true
+        type: string
+      solution_root:
+        description: Directory that holds global.json and the projects
+        required: false
+        default: sim/dotnet
+        type: string
+      artifact:
+        description: Build artifact of this run, from the build job
+        required: true
+        type: string
+      parallel:
+        description: Test projects run at once; 0 means one per processor
+        required: false
+        default: 0
+        type: number
+    outputs:
+      verdict:
+        description: pass, test or infra
+        value: ${{ jobs.classify.outputs.verdict }}
+      reason:
+        description: Named cause of an infra verdict, otherwise empty
+        value: ${{ jobs.classify.outputs.reason }}
+      executed:
+        description: Tests the lane executed, summed over its projects; empty when the guard did not pass
+        value: ${{ jobs.run.outputs.executed }}
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: route
+    uses: ./.github/workflows/tpl-route.yml # zizmor: ignore[self-repository]
+    with:
+      runner_label: ${{ inputs.runner_label }}
+
+  run:
+    name: run dotnet-${{ inputs.lane }}
+    needs: route
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.route.outputs.target == 'onprem' && inputs.runner_label || 'ubuntu-24.04' }}
+    timeout-minutes: 25
+    env:
+      SIM_ROOT: ${{ inputs.solution_root }}
+    outputs:
+      executed: ${{ steps.zero.outputs.executed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.pr_sha }}
+          persist-credentials: false
+      - name: Set up Python
+        if: ${{ runner.environment == 'github-hosted' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Checkout trusted
+        if: ${{ runner.environment == 'self-hosted' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .sim-trusted
+          persist-credentials: false
+          sparse-checkout: core
+      - name: Hygiene
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          SIM_SURVIVORS: dotnet testhost vstest.console VBCSCompiler
+        run: |
+          set -u
+          status=0
+          if [ -L .sim-trusted ] || [ ! -d .sim-trusted/.git ] || [ "$(git -C .sim-trusted rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+              echo "::error::the trusted checkout is not the dispatch commit"
+              status=1
+          else
+              sh .sim-trusted/core/prejob.sh || status=$?
+          fi
+          rm -rf .sim-trusted
+          exit "$status"
+      - name: Download build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/build
+      - name: Unpack
+        run: sh adapters/dotnet/build_artifact.sh unpack "$RUNNER_TEMP/build/build.tar"
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: ${{ inputs.solution_root }}/global.json
+      - name: Health
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/markers"
+          echo "MARKERS=$RUNNER_TEMP/markers" >> "$GITHUB_ENV"
+          python3 --version
+          (cd "$SIM_ROOT" && dotnet --version)
+          touch "$RUNNER_TEMP/markers/health"
+      - name: Services
+        env:
+          LANE: ${{ inputs.lane }}
+          SQL_IMAGE: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+          CACHE_IMAGE: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        run: |
+          set -eu
+          if [ "$LANE" = integration ]; then
+              runner_label="sim.runner=${RUNNER_NAME}"
+              job_label="sim.job=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${LANE}"
+              docker run -d --name "sim-sql-${GITHUB_RUN_ID}-${LANE}" --label "$runner_label" --label "$job_label" \
+                  -e POSTGRES_PASSWORD=workload -p 127.0.0.1::5432 "$SQL_IMAGE"
+              docker run -d --name "sim-cache-${GITHUB_RUN_ID}-${LANE}" --label "$runner_label" --label "$job_label" \
+                  -p 127.0.0.1::6379 "$CACHE_IMAGE"
+              ready=
+              for _ in $(seq 1 60); do
+                  if docker exec "sim-sql-${GITHUB_RUN_ID}-${LANE}" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 \
+                      && docker exec "sim-cache-${GITHUB_RUN_ID}-${LANE}" sh -c 'redis-cli ping | grep -q PONG' >/dev/null 2>&1; then
+                      ready=1
+                      break
+                  fi
+                  sleep 2
+              done
+              [ -n "$ready" ] || { echo "::error::services did not become ready"; exit 1; }
+              sql_bind=$(docker port "sim-sql-${GITHUB_RUN_ID}-${LANE}" 5432/tcp | head -n 1)
+              cache_bind=$(docker port "sim-cache-${GITHUB_RUN_ID}-${LANE}" 6379/tcp | head -n 1)
+              {
+                  echo "SIM_SQL_HOST=127.0.0.1"
+                  echo "SIM_SQL_PORT=${sql_bind##*:}"
+                  echo "SIM_CACHE_HOST=127.0.0.1"
+                  echo "SIM_CACHE_PORT=${cache_bind##*:}"
+              } >> "$GITHUB_ENV"
+          fi
+          touch "$MARKERS/services"
+      - name: Test
+        env:
+          LANE: ${{ inputs.lane }}
+          PARALLEL: ${{ inputs.parallel }}
+          KILL_RUNNER: ${{ inputs.sim_fault == 'kill_both' || inputs.sim_fault == 'kill_onprem' && needs.route.outputs.target == 'onprem' }}
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+          DOTNET_NOLOGO: "1"
+          MSBUILDDISABLENODEREUSE: "1"
+          DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+        run: |
+          set -u
+          touch "$MARKERS/test-start"
+          if [ "$KILL_RUNNER" = true ]; then
+              sh "$GITHUB_WORKSPACE/core/kill_own_runner.sh" || exit 1
+              sleep 600
+          fi
+          case "$LANE" in
+              integration) filter="Category=integration" ;;
+              *) filter="Category!=integration" ;;
+          esac
+          status=0
+          sh adapters/dotnet/test_lane.sh "$RUNNER_TEMP/build/$LANE.txt" "$RUNNER_TEMP/counts" "$filter" "$PARALLEL" || status=1
+          touch "$MARKERS/test-end"
+          exit "$status"
+      - name: Zero tests
+        id: zero
+        env:
+          LANE: ${{ inputs.lane }}
+        run: |
+          set -u
+          status=0
+          python3 -m core.zero_tests --list "$RUNNER_TEMP/build/$LANE.txt" --counts "$RUNNER_TEMP/counts" > "$RUNNER_TEMP/zero.txt" || status=1
+          cat "$RUNNER_TEMP/zero.txt"
+          [ "$status" = 0 ] || exit 1
+          awk '/^executed=[0-9]+ / { sub(/^executed=/, ""); n += $1 } END { printf "executed=%d\n", n }' "$RUNNER_TEMP/zero.txt" >> "$GITHUB_OUTPUT"
+      - name: Remove services
+        if: ${{ always() && inputs.lane == 'integration' }}
+        env:
+          JOB_LABEL: sim.job=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}
+        run: |
+          ids=$(docker ps -aq --filter "label=${JOB_LABEL}")
+          [ -z "$ids" ] || printf '%s\n' "$ids" | xargs docker rm -f
+      - name: Upload markers
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: markers-dotnet-${{ inputs.lane }}
+          path: ${{ runner.temp }}/markers
+          if-no-files-found: ignore
+          retention-days: 1
+
+  classify:
+    name: classify dotnet-${{ inputs.lane }}
+    needs: run
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+      reason: ${{ steps.verdict.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Classify
+        id: verdict
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JOB_SUFFIX: run dotnet-${{ inputs.lane }}
+          ARTIFACT_NAME: markers-dotnet-${{ inputs.lane }}
+          RUN_RESULT: ${{ needs.run.result }}
+        run: |
+          set -eu
+          verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt" --infra-step "Set up .NET" --infra-step "Download build")
+          case "$verdict" in
+              pass | test | infra) ;;
+              *) verdict="test" ;;
+          esac
+          reason=
+          [ ! -f "$RUNNER_TEMP/reason.txt" ] || reason=$(cat "$RUNNER_TEMP/reason.txt")
+          case "$reason" in
+              *[!A-Za-z0-9\ _-]*) reason= ;;
+          esac
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"

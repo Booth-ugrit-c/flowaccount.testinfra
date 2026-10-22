@@ -105,6 +105,13 @@ class Lab:
             timeout=60,
         )
 
+    def build(self, plan, **over):
+        hits, built = (self.t / "hits.txt").as_posix(), (self.t / "built.txt").as_posix()
+        restored = self.run("restore", plan, hits, **over)
+        if restored.returncode != 0:
+            return restored
+        return self.run("build", plan, hits, built, **over)
+
     def plan(self, *projects):
         path = self.t / "plan.txt"
         path.write_bytes("".join(f"{p}\n" for p in projects).encode())
@@ -136,21 +143,48 @@ def lab(tmp_path, request):
 
 def test_a_hit_is_skipped_and_a_miss_is_built_alone_without_its_references(lab):
     lab.table(["restore Core hit 0", "restore Utils miss 0"])
-    result = lab.run("build", lab.plan(CORE, UTILS), (lab.t / "built.txt").as_posix())
+    result = lab.build(lab.plan(CORE, UTILS))
     assert result.returncode == 0, result.stderr
     assert lab.cache_calls() == ["restore Core", "restore Utils"]
     calls = lab.dotnet_calls()
     assert len(calls) == 1
     assert calls[0] == (
-        f"cwd=dotnet build {lab.workspace.as_posix()}/{UTILS} -c Release --disable-build-servers "
+        f"cwd=dotnet build {lab.workspace.as_posix()}/{UTILS} -c Release --disable-build-servers -v:normal "
         "-p:BuildProjectReferences=false -p:IncludeSourceRevisionInInformationalVersion=false"
     )
     assert lab.built() == [UTILS]
+    assert (lab.t / "hits.txt").read_text().splitlines() == [CORE]
+
+
+def test_the_build_mode_never_asks_the_store_and_skips_only_the_listed_hits(lab):
+    lab.table(["restore Core hit 0", "restore Utils hit 0"])
+    hits = (lab.t / "hits.txt")
+    hits.write_bytes(f"{CORE}\n".encode())
+    result = lab.run("build", lab.plan(CORE, UTILS, SERVICE), hits.as_posix(), (lab.t / "built.txt").as_posix())
+    assert result.returncode == 0, result.stderr
+    assert lab.cache_calls() == []
+    assert lab.built() == [UTILS, SERVICE]
+
+
+def test_the_build_mode_refuses_to_run_without_a_hits_file(lab):
+    result = lab.run("build", lab.plan(CORE), (lab.t / "absent.txt").as_posix(), (lab.t / "built.txt").as_posix())
+    assert result.returncode != 0
+    assert lab.dotnet_calls() == []
+
+
+def test_with_the_cache_off_restore_writes_an_empty_hits_file(lab):
+    lab.table(["restore Core hit 0"])
+    hits = lab.t / "hits.txt"
+    hits.write_bytes(f"{UTILS}\n".encode())
+    result = lab.run("restore", lab.plan(CORE), hits.as_posix(), SIM_CACHE_MODE="off")
+    assert result.returncode == 0
+    assert hits.read_bytes() == b""
+    assert lab.cache_calls() == []
 
 
 def test_the_plan_is_built_in_the_given_order(lab):
     lab.table(["restore Core miss 0", "restore Utils miss 0", "restore Service miss 0"])
-    lab.run("build", lab.plan(CORE, UTILS, SERVICE), (lab.t / "built.txt").as_posix())
+    lab.build(lab.plan(CORE, UTILS, SERVICE))
     assert lab.built() == [CORE, UTILS, SERVICE]
     assert [c.split("/")[-1].split(" ")[0] for c in lab.dotnet_calls()] == ["Core.csproj", "Utils.csproj", "Service.csproj"]
 
@@ -158,14 +192,14 @@ def test_the_plan_is_built_in_the_given_order(lab):
 @pytest.mark.parametrize("answer", ["- 2", "garbage 0", "- 1", "miss 1", "hit 2", "HIT 0", "- 0"])
 def test_anything_but_a_clean_hit_is_a_cold_build_and_never_a_failure(lab, answer):
     lab.table([f"restore Core {answer}"])
-    result = lab.run("build", lab.plan(CORE), (lab.t / "built.txt").as_posix())
+    result = lab.build(lab.plan(CORE))
     assert result.returncode == 0, result.stderr
     assert lab.built() == [CORE]
 
 
 def test_a_failing_build_fails_the_step_and_stops_the_plan(lab):
     lab.table(["restore Core miss 0", "restore Utils miss 0", "restore Service miss 0"])
-    result = lab.run("build", lab.plan(CORE, UTILS, SERVICE), (lab.t / "built.txt").as_posix(), FAKE_DOTNET_FAIL_ON="Utils")
+    result = lab.build(lab.plan(CORE, UTILS, SERVICE), FAKE_DOTNET_FAIL_ON="Utils")
     assert result.returncode != 0
     assert lab.built() == [CORE]
     assert not any("Service" in call for call in lab.dotnet_calls())
@@ -173,13 +207,13 @@ def test_a_failing_build_fails_the_step_and_stops_the_plan(lab):
 
 def test_with_the_cache_off_nothing_is_restored_and_everything_is_built(lab):
     lab.table(["restore Core hit 0", "restore Utils hit 0"])
-    lab.run("build", lab.plan(CORE, UTILS), (lab.t / "built.txt").as_posix(), SIM_CACHE_MODE="off")
+    lab.build(lab.plan(CORE, UTILS), SIM_CACHE_MODE="off")
     assert lab.cache_calls() == []
     assert lab.built() == [CORE, UTILS]
 
 
 def test_an_empty_plan_builds_nothing(lab):
-    result = lab.run("build", lab.plan(), (lab.t / "built.txt").as_posix())
+    result = lab.build(lab.plan())
     assert result.returncode == 0
     assert lab.dotnet_calls() == [] and lab.cache_calls() == []
 
@@ -190,14 +224,14 @@ def test_an_empty_plan_builds_nothing(lab):
 )
 def test_the_endpoint_follows_the_runner_environment(lab, environment, expected):
     lab.table(["restore Core hit 0"])
-    result = lab.run("build", lab.plan(CORE), (lab.t / "built.txt").as_posix(), RUNNER_ENVIRONMENT=environment)
+    result = lab.build(lab.plan(CORE), RUNNER_ENVIRONMENT=environment)
     assert lab.cache_endpoints() == {expected}
     assert ENDPOINT_LAB not in result.stdout + result.stderr and ENDPOINT_TAILNET not in result.stdout + result.stderr
 
 
 def test_an_unknown_runner_environment_gets_no_endpoint(lab):
     lab.table(["restore Core hit 0"])
-    lab.run("build", lab.plan(CORE), (lab.t / "built.txt").as_posix(), RUNNER_ENVIRONMENT="something-else")
+    lab.build(lab.plan(CORE), RUNNER_ENVIRONMENT="something-else")
     assert lab.cache_endpoints() == {""}
 
 
@@ -272,7 +306,7 @@ def cache_off_markers(lab):
 
 def test_with_the_cache_off_marker_the_build_never_asks_the_store(lab):
     lab.table(["restore Core hit 0", "restore Utils hit 0"])
-    result = lab.run("build", lab.plan(CORE, UTILS), (lab.t / "built.txt").as_posix(), MARKERS=cache_off_markers(lab))
+    result = lab.build(lab.plan(CORE, UTILS), MARKERS=cache_off_markers(lab))
     assert result.returncode == 0, result.stderr
     assert lab.cache_calls() == []
     assert lab.built() == [CORE, UTILS]
@@ -289,7 +323,7 @@ def test_a_failed_join_then_build_then_save_is_a_cold_build_that_never_touches_t
     markers = (lab.t / "markers").as_posix()
     hosted = dict(RUNNER_ENVIRONMENT="github-hosted", SIM_TAILNET_JOIN="failure", MARKERS=markers)
     assert lab.run("tripwire", markers, **hosted).returncode == 0
-    assert lab.run("build", lab.plan(CORE), (lab.t / "built.txt").as_posix(), **hosted).returncode == 0
+    assert lab.build(lab.plan(CORE), **hosted).returncode == 0
     assert lab.run("save", (lab.t / "built.txt").as_posix(), **hosted).returncode == 0
     assert lab.cache_calls() == []
     assert lab.built() == [CORE]
@@ -354,7 +388,7 @@ def test_a_missing_built_list_saves_nothing(lab):
     assert lab.cache_calls() == []
 
 
-@pytest.mark.parametrize("args", [[], ["nonsense"], ["build"], ["save"]])
+@pytest.mark.parametrize("args", [[], ["nonsense"], ["build"], ["build", "plan.txt", "hits.txt"], ["restore"], ["restore", "plan.txt"], ["save"]])
 def test_bad_usage_fails(lab, args):
     assert lab.run(*args).returncode != 0
 

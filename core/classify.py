@@ -18,6 +18,7 @@ FINGERPRINTS = Path(__file__).with_name("fingerprints.txt")
 PHASE_MARKERS = ("health", "services", "build", "test-start", "test-end")
 TRIPWIRE_MARKER = "cache-tripwire"
 KNOWN_MARKERS = PHASE_MARKERS + (TRIPWIRE_MARKER,)
+DONE_MARKER = "test-end"
 TRIPWIRE_REASON = "cache tripwire"
 STEP_TEST = "Test"
 INFRA_STEPS = ("Set up job", "Checkout trusted", "Hygiene", "Health", "Services")
@@ -69,18 +70,18 @@ def step_conclusions(job):
     return {s["name"]: s.get("conclusion") for s in steps if isinstance(s, dict) and "name" in s}
 
 
-def classify(markers, job, log, fingerprints, annotations_read=False, run_result=None, infra_steps=INFRA_STEPS):
+def classify(markers, job, log, fingerprints, annotations_read=False, run_result=None, infra_steps=INFRA_STEPS, done=DONE_MARKER):
     if TRIPWIRE_MARKER in markers:
         return "infra"
     if run_result == "success":
-        return "pass" if "test-end" in markers else "test"
+        return "pass" if done in markers else "test"
     if job is None:
         return "test"
     conclusion = run_result or job.get("conclusion")
     steps = step_conclusions(job)
     if conclusion == "success":
-        return "pass" if "test-end" in markers or steps.get(STEP_TEST) == "success" else "test"
-    if "test-end" in markers:
+        return "pass" if done in markers or steps.get(STEP_TEST) == "success" else "test"
+    if done in markers:
         return "test"
     if TIMEOUT_TEXT in log:
         return "test"
@@ -100,7 +101,7 @@ def classify(markers, job, log, fingerprints, annotations_read=False, run_result
     return "test"
 
 
-def classify_dir(job_dir, fingerprints=None, run_result=None, extra_infra_steps=()):
+def classify_dir(job_dir, fingerprints=None, run_result=None, extra_infra_steps=(), done=DONE_MARKER):
     job_dir = Path(job_dir)
     return classify(
         read_markers(job_dir / "markers"),
@@ -110,6 +111,7 @@ def classify_dir(job_dir, fingerprints=None, run_result=None, extra_infra_steps=
         (job_dir / ANNOTATIONS_OK).is_file(),
         run_result,
         INFRA_STEPS + tuple(extra_infra_steps),
+        done,
     )
 
 
@@ -252,6 +254,7 @@ def main(argv):
     parser.add_argument("--reason-file")
     parser.add_argument("--run-result")
     parser.add_argument("--infra-step", action="append", default=[])
+    parser.add_argument("--done-marker", default=DONE_MARKER, choices=("build", DONE_MARKER))
     args = parser.parse_args(argv)
     extra = [name for name in args.infra_step if STEP_NAME.fullmatch(name) and name != STEP_TEST]
     if len(extra) != len(args.infra_step):
@@ -262,7 +265,7 @@ def main(argv):
     try:
         if args.fetch_job and args.fetch_artifact:
             fetch_attempt(os.environ, args.job_dir, args.fetch_job, args.fetch_artifact, run_result)
-        verdict = classify_dir(args.job_dir, run_result=run_result, extra_infra_steps=extra)
+        verdict = classify_dir(args.job_dir, run_result=run_result, extra_infra_steps=extra, done=args.done_marker)
         tripped = TRIPWIRE_MARKER in read_markers(Path(args.job_dir) / "markers")
         if tripped:
             print("classify: infra: cache tripwire", file=sys.stderr)

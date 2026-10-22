@@ -538,3 +538,47 @@ def test_cli_ignores_an_unknown_run_result_and_says_so(tmp_path):
     out = run_cli(case_dir(tmp_path, "pass_full"), args=["--run-result", "neutral"])
     assert out.stdout == "pass\n"
     assert "classify: unknown run result" in out.stderr
+
+
+@pytest.mark.parametrize(
+    ("run_result", "markers", "job", "infra", "expected"),
+    [
+        ("success", {"health", "build"}, None, (), "pass"),
+        ("success", {"health", "test-end"}, None, (), "test"),
+        ("success", {"health"}, None, (), "test"),
+        ("failure", {"health", "build"}, failed_step("Save cache"), (), "test"),
+        ("failure", {"health"}, failed_step("Upload build"), ("Upload build",), "infra"),
+        ("failure", {"health"}, failed_step("Build"), ("Upload build",), "test"),
+    ],
+)
+def test_a_build_job_is_done_at_its_build_marker(run_result, markers, job, infra, expected):
+    infra_steps = classify.INFRA_STEPS + infra
+    assert classify.classify(markers, job, "", [], True, run_result, infra_steps, "build") == expected
+
+
+def test_a_build_job_that_lost_its_runner_after_the_build_marker_is_test():
+    job = {"status": "completed", "conclusion": "failure", "steps": [{"name": "Upload markers", "conclusion": "cancelled"}]}
+    fingerprints = classify.load_fingerprints()
+    assert classify.classify({"health"}, job, LOST, fingerprints, True, "failure", classify.INFRA_STEPS, "build") == "infra"
+    assert classify.classify({"health", "build"}, job, LOST, fingerprints, True, "failure", classify.INFRA_STEPS, "build") == "test"
+
+
+def build_markers(tmp_path, *names):
+    markers = tmp_path / "job" / "markers"
+    markers.mkdir(parents=True)
+    for name in names:
+        (markers / name).write_text("")
+    return tmp_path / "job"
+
+
+def test_cli_takes_the_done_marker_from_the_adapter(tmp_path):
+    job = build_markers(tmp_path, "health", "build")
+    assert run_cli(job, args=["--run-result", "success"]).stdout == "test\n"
+    assert run_cli(job, args=["--run-result", "success", "--done-marker", "build"]).stdout == "pass\n"
+
+
+@pytest.mark.parametrize("marker", ["health", "test-start", "cache-tripwire", ""])
+def test_cli_refuses_a_done_marker_that_is_not_a_phase_end(tmp_path, marker):
+    out = run_cli(build_markers(tmp_path, "health", marker or "x"), args=["--run-result", "success", "--done-marker", marker])
+    assert out.returncode != 0
+    assert "pass" not in out.stdout
