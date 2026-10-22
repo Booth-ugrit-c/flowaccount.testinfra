@@ -6,7 +6,7 @@ from pathlib import Path
 TOKEN_NAME = "SIM_ROUTE_TOKEN"
 WRITER_PREFIX = "SIM_CACHE_WRITE"
 FORBIDDEN_TRIGGERS = {"pull_request_target", "workflow_run", "issue_comment"}
-SECRETISH_VARIABLE = re.compile(r"\bvars\.[A-Za-z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD)", re.I)
+SECRETISH_VARIABLE = re.compile(r"\bvars\.[A-Za-z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|ENDPOINT)", re.I)
 PINNED = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$")
 BUDGET_MINUTES = 80
 MAX_ATTEMPT_MINUTES = 30
@@ -265,6 +265,15 @@ SECRET_REF = re.compile(r"""\bsecrets\s*[.\[]\s*['"]?([A-Za-z0-9_]+)""")
 READER_PREFIX = "SIM_CACHE_READ"
 
 
+ENDPOINT_NAMES = ("SIM_CACHE_ENDPOINT_LAB", "SIM_CACHE_ENDPOINT_TAILNET")
+TAILNET_KEY = "SIM_TAILNET_AUTHKEY"
+ATTEMPT = "sim-gate-attempt.yml"
+
+
+def in_attempt_run_step(name, path, section):
+    return name == ATTEMPT and path[:2] == ("jobs", "run") and len(path) >= 6 and path[2] == "steps" and path[4] == section
+
+
 def secret_allowed(name, path, secret, value):
     key = str(path[-1])
     exact = value.strip() == "${{ secrets." + secret + " }}" and key == secret
@@ -276,12 +285,10 @@ def secret_allowed(name, path, secret, value):
             and path[2] == "steps"
             and path[4:5] == ("env",)
         )
-    in_step_env = len(path) >= 5 and path[0] == "jobs" and path[2] == "steps" and path[4] == "env"
-    in_call_secrets = len(path) == 4 and path[0] == "jobs" and path[2] == "secrets"
-    if secret.startswith(READER_PREFIX):
-        return exact and (in_step_env or in_call_secrets)
-    if secret.startswith(WRITER_PREFIX):
-        return exact and in_step_env
+    if secret == TAILNET_KEY:
+        return value.strip() == "${{ secrets." + secret + " }}" and key == "authkey" and in_attempt_run_step(name, path, "with")
+    if secret in ENDPOINT_NAMES or secret.startswith((READER_PREFIX, WRITER_PREFIX)):
+        return exact and in_attempt_run_step(name, path, "env")
     return False
 
 
@@ -294,9 +301,63 @@ def secret_violations(docs):
                 if not secret_allowed(name, path, match.group(1), str(value)):
                     found.append(f"{name}: secret {match.group(1)} is read at a place that is not allowed: {where}")
             if "secrets" in path:
-                after = path[path.index("secrets") + 1 :]
-                if not after or not str(after[0]).startswith(READER_PREFIX):
-                    found.append(f"{name}: a secrets mapping may pass only {READER_PREFIX}* keys: {where}")
+                found.append(f"{name}: no secrets mapping or declaration is allowed, secrets are read in the attempt step env only: {where}")
+    return found
+
+
+def default_branch_only(guard):
+    default_branch = {"github.ref_name": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": False}
+    other_branch = {"github.ref_name": "topic", "github.event.repository.default_branch": "main", "inputs.fail_test": False}
+    return truthy(evaluate(condition(guard), default_branch)) and not truthy(evaluate(condition(guard), other_branch))
+
+
+def hosted_only(guard):
+    return truthy(evaluate(condition(guard), {"runner.environment": "github-hosted"})) and not truthy(
+        evaluate(condition(guard), {"runner.environment": "self-hosted"})
+    )
+
+
+def cache_wiring_violations(docs):
+    found = []
+    steps = docs[ATTEMPT]["jobs"]["run"]["steps"]
+    names = [st.get("name") for st in steps]
+    for step in steps:
+        if TAILNET_KEY in str(step) and not (
+            str(step.get("uses", "")).startswith("tailscale/github-action@") and "if" in step and hosted_only(str(step["if"]))
+        ):
+            found.append("the tailnet auth key may be used only by the tailscale action on a github-hosted runner")
+        if WRITER_PREFIX in str(step):
+            guard = step.get("if")
+            if guard is None or not default_branch_only(str(guard)):
+                found.append("a step reading the cache writer key must itself be gated on the default branch")
+            elif truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": True})):
+                found.append("the cache save step must not run when fail_test is on")
+            elif not truthy(evaluate(condition(str(guard)), {"github.ref_name": "main", "github.event.repository.default_branch": "main", "inputs.fail_test": False})):
+                found.append("the cache save step never runs on the default branch with fail_test off")
+            if "cache_build.sh save" not in str(step.get("run", "")):
+                found.append("the step holding the cache writer key must only run cache_build.sh save")
+    if "Cache tripwire" not in names or "Build" not in names or names.index("Cache tripwire") > names.index("Build"):
+        found.append("the cache tripwire step must come before the Build step")
+    elif "cache_build.sh tripwire" not in str(steps[names.index("Cache tripwire")].get("run", "")):
+        found.append("the cache tripwire step must run cache_build.sh tripwire")
+    for early in ("Health", "Services", "Affected", "Plan"):
+        if early in names and "Cache tripwire" in names and names.index(early) > names.index("Cache tripwire"):
+            found.append(f"the cache tripwire step must come after {early}")
+    if "Join the tailnet" in names and "Cache tripwire" in names and names.index("Join the tailnet") > names.index("Cache tripwire"):
+        found.append("the tailnet must be joined before the cache tripwire step")
+    if "Join the tailnet" not in names:
+        found.append("the attempt job has no step that joins the tailnet on hosted runners")
+    build = steps[names.index("Build")] if "Build" in names else {}
+    if "cache_build.sh build" not in str(build.get("run", "")):
+        found.append("the Build step must go through cache_build.sh build")
+    for name, doc in docs.items():
+        for job_id, job in doc["jobs"].items():
+            for step in job.get("steps", []):
+                for line in str(step.get("run", "")).split("\n"):
+                    if re.search(r"\bdotnet\s+test\b", line) and "--no-build" not in line:
+                        found.append(f"{name}: dotnet test without --no-build would rebuild restored projects: {line.strip()}")
+                    if re.search(r"\bdotnet\s+build\b", line):
+                        found.append(f"{name}: dotnet build outside cache_build.sh bypasses the cache: {line.strip()}")
     return found
 
 
@@ -394,20 +455,23 @@ def violations(directory):
     if "opaque" not in str(label_input.get("description", "")).lower():
         found.append("lab_label input must say the label is public in logs and has to be opaque")
 
-    default_branch = {"github.ref_name": "main", "github.event.repository.default_branch": "main"}
-    other_branch = {"github.ref_name": "topic", "github.event.repository.default_branch": "main"}
+    found += cache_wiring_violations(docs)
     for name, doc in docs.items():
         writer_refs = {
-            path[:2]
+            path[:4] if len(path) > 3 and path[2] == "steps" else path[:2]
             for path, value in walk(doc)
             if WRITER_PREFIX in str(value) or WRITER_PREFIX in str(path[-1])
         }
         for where in sorted(writer_refs, key=str):
-            guard = doc["jobs"][where[1]].get("if") if where[0] == "jobs" else None
-            if where[0] != "jobs" or guard is None:
+            if where[0] != "jobs":
                 found.append(f"{name}: {WRITER_PREFIX}* is referenced outside a job gated on the default branch: {where}")
-            elif not truthy(evaluate(condition(guard), default_branch)) or truthy(evaluate(condition(guard), other_branch)):
-                found.append(f"{name}: job {where[1]} reads {WRITER_PREFIX}* but its guard does not mean the default branch only")
+                continue
+            job = doc["jobs"][where[1]]
+            guards = [job.get("if")]
+            if len(where) == 4:
+                guards.append(job["steps"][where[3]].get("if"))
+            if not any(g is not None and default_branch_only(str(g)) for g in guards):
+                found.append(f"{name}: {WRITER_PREFIX}* is referenced outside a job gated on the default branch: {where}")
 
     route = docs["sim-gate-lane.yml"]["jobs"]["route"]
     runs_on = str(route.get("runs-on", ""))

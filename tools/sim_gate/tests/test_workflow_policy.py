@@ -331,6 +331,102 @@ MUTATIONS = {
         "          HEAD_REF: ${{ inputs.base }}",
         "must equal the head given to affected",
     ),
+    "tailnet join without a hosted-only guard": (
+        ATTEMPT,
+        "      - name: Join the tailnet\n        if: ${{ runner.environment == 'github-hosted' }}\n",
+        "      - name: Join the tailnet\n",
+        "tailnet auth key may be used only by the tailscale action on a github-hosted runner",
+    ),
+    "tailnet join on self-hosted runners": (
+        ATTEMPT,
+        "      - name: Join the tailnet\n        if: ${{ runner.environment == 'github-hosted' }}\n",
+        "      - name: Join the tailnet\n        if: ${{ runner.environment == 'self-hosted' }}\n",
+        "tailnet auth key may be used only by the tailscale action on a github-hosted runner",
+    ),
+    "tailnet key read by another step": (
+        ATTEMPT,
+        "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n",
+        "          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}\n          SIM_TAILNET_AUTHKEY: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
+        "tailnet auth key may be used only by the tailscale action",
+    ),
+    "tailnet key read in the route job": (
+        LANE,
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n",
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n          T: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
+        "secret SIM_TAILNET_AUTHKEY is read at a place that is not allowed",
+    ),
+    "tailnet key given to another action input": (
+        ATTEMPT,
+        "          authkey: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
+        "          authkey: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n          args: ${{ secrets.SIM_TAILNET_AUTHKEY }}\n",
+        "secret SIM_TAILNET_AUTHKEY is read at a place that is not allowed",
+    ),
+    "cache endpoint read in the route job": (
+        LANE,
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n",
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n",
+        "secret SIM_CACHE_ENDPOINT_LAB is read at a place that is not allowed",
+    ),
+    "cache endpoint read in the classify job": (
+        ATTEMPT,
+        "          ARTIFACT_NAME: markers-${{ inputs.tag }}\n",
+        "          ARTIFACT_NAME: markers-${{ inputs.tag }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n",
+        "secret SIM_CACHE_ENDPOINT_TAILNET is read at a place that is not allowed",
+    ),
+    "cache endpoint taken from a repository variable": (
+        ATTEMPT,
+        "          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID",
+        "          SIM_CACHE_ENDPOINT_LAB: ${{ vars.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID",
+        "read from vars",
+    ),
+    "reader key read in the route job": (
+        LANE,
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n",
+        "          LAB_LABEL: ${{ inputs.lab_label }}\n          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}\n",
+        "secret SIM_CACHE_READ_SECRET is read at a place that is not allowed",
+    ),
+    "dotnet test that rebuilds": (
+        ATTEMPT,
+        "-c Release --no-build --filter",
+        "-c Release --filter",
+        "dotnet test without --no-build",
+    ),
+    "a raw dotnet build that bypasses the cache": (
+        ATTEMPT,
+        '          touch "$MARKERS/build"\n',
+        '          dotnet build sim/dotnet/Sim.sln\n          touch "$MARKERS/build"\n',
+        "dotnet build outside cache_build.sh bypasses the cache",
+    ),
+    "the build step not going through the cache script": (
+        ATTEMPT,
+        'sh tools/sim_gate/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"',
+        "echo build",
+        "Build step must go through cache_build.sh build",
+    ),
+    "the cache tripwire step removed": (
+        ATTEMPT,
+        '      - name: Cache tripwire\n        env:\n          SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}\n          SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}\n          SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n          SIM_CACHE_READ_SECRET: ${{ secrets.SIM_CACHE_READ_SECRET }}\n        run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"\n',
+        "",
+        "tripwire step must come before the Build step",
+    ),
+    "the cache tripwire step running something else": (
+        ATTEMPT,
+        'run: sh tools/sim_gate/cache_build.sh tripwire "$MARKERS"',
+        "run: echo clear",
+        "must run cache_build.sh tripwire",
+    ),
+    "the cache tripwire step before the plan": (
+        ATTEMPT,
+        "      - name: Plan\n",
+        "      - name: Cache tripwire\n        run: sh tools/sim_gate/cache_build.sh tripwire \"$MARKERS\"\n      - name: Plan\n",
+        "tripwire step must come after Plan",
+    ),
+    "the save step running something else": (
+        ATTEMPT,
+        'run: sh tools/sim_gate/cache_build.sh save "$RUNNER_TEMP/built.txt"',
+        "run: echo save",
+        "must only run cache_build.sh save",
+    ),
     "environment on the attempt job": (
         ATTEMPT,
         "    runs-on: ${{ inputs.runner }}\n    timeout-minutes: 25",
@@ -383,7 +479,7 @@ def test_a_non_reader_secret_passed_into_the_attempt_workflow_is_refused(copy):
         encoding="utf-8",
     )
     found = policy.violations(copy)
-    assert any("a secrets mapping may pass only SIM_CACHE_READ" in line for line in found), found
+    assert any("no secrets mapping or declaration is allowed" in line for line in found), found
     assert any("secret OTHER_SECRET is read" in line for line in found), found
 
 
@@ -395,14 +491,16 @@ def test_the_reader_key_may_be_read_by_the_attempt_job_on_any_runner(copy):
     assert policy.violations(copy) == []
 
 
-def test_the_reader_key_may_be_passed_to_the_attempt_workflow_through_secrets(copy):
+def test_the_reader_key_passed_to_the_attempt_workflow_through_secrets_is_refused(copy):
     path = copy / LANE
     text = path.read_text(encoding="utf-8")
     old = "    uses: ./.github/workflows/sim-gate-attempt.yml # zizmor: ignore[self-repository]\n    with:\n      tag: ${{ inputs.lane }}-attempt"
     assert old in text
-    new = old.replace("    with:", "    secrets:\n      SIM_CACHE_READ_KEY: ${{ secrets.SIM_CACHE_READ_KEY }}\n    with:")
+    new = old.replace("    with:", "    secrets:\n      SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}\n    with:")
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
-    assert policy.violations(copy) == []
+    found = policy.violations(copy)
+    assert any("no secrets mapping or declaration is allowed" in line for line in found), found
+    assert any("SIM_CACHE_READ_KEY_ID is read at a place that is not allowed" in line for line in found), found
 
 
 def test_the_reader_key_under_a_different_name_or_expression_is_refused(copy):
@@ -422,7 +520,7 @@ def test_a_workflow_call_secrets_declaration_for_a_non_reader_secret_is_refused(
         "on:\n  workflow_call:\n    inputs:",
         "on:\n  workflow_call:\n    secrets:\n      OTHER_SECRET:\n        required: false\n    inputs:",
     )
-    assert any("a secrets mapping may pass only" in line for line in policy.violations(copy))
+    assert any("no secrets mapping or declaration is allowed" in line for line in policy.violations(copy))
 
 
 def test_a_missing_workflow_is_refused(copy):
@@ -473,52 +571,33 @@ def test_expression_evaluator_refuses_what_it_does_not_model(expression):
         policy.evaluate(expression, {})
 
 
-WRITER_JOB = """  writer:
-    if: GUARD
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Save
-        env:
-          SIM_CACHE_WRITE_KEY: ${{ secrets.SIM_CACHE_WRITE_KEY }}
-        run: echo save
-"""
+SAVE_GUARD = "        if: ${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == false }}\n"
 
 
-def add_writer_job(copy, guard):
-    path = copy / LANE
-    text = path.read_text(encoding="utf-8")
-    body = WRITER_JOB.replace("    if: GUARD\n", "" if guard is None else f"    if: {guard}\n")
-    assert "jobs:\n  route:" in text
-    path.write_text(text.replace("jobs:\n  route:", "jobs:\n" + body + "  route:", 1), encoding="utf-8")
+def with_save_guard(copy, guard):
+    mutate(copy, ATTEMPT, SAVE_GUARD, "" if guard is None else f"        if: {guard}\n")
 
 
-DEFAULT_ONLY = "${{ github.ref_name == github.event.repository.default_branch }}"
-
-
-def test_a_cache_writer_job_gated_on_the_default_branch_is_accepted(copy):
-    add_writer_job(copy, DEFAULT_ONLY)
-    assert policy.violations(copy) == []
-
-
-def test_the_bare_form_of_the_default_branch_guard_is_accepted_too(copy):
-    add_writer_job(copy, "github.ref_name == github.event.repository.default_branch")
+def test_the_bare_form_of_the_save_guard_is_accepted_too(copy):
+    with_save_guard(copy, "github.ref_name == github.event.repository.default_branch && inputs.fail_test == false")
     assert policy.violations(copy) == []
 
 
 @pytest.mark.parametrize(
-    "guard",
+    "guard, message",
     [
-        None,
-        "${{ github.ref_name != '' }}",
-        "${{ always() }}",
-        "${{ github.ref_name != github.event.repository.default_branch }}",
-        "${{ github.event_name == 'workflow_dispatch' }}",
+        (None, "must itself be gated on the default branch"),
+        ("${{ github.ref_name != '' && inputs.fail_test == false }}", "must itself be gated on the default branch"),
+        ("${{ always() }}", "must itself be gated on the default branch"),
+        ("${{ github.ref_name != github.event.repository.default_branch }}", "must itself be gated on the default branch"),
+        ("${{ github.event_name == 'workflow_dispatch' }}", "must itself be gated on the default branch"),
+        ("${{ github.ref_name == github.event.repository.default_branch }}", "must not run when fail_test is on"),
+        ("${{ github.ref_name == github.event.repository.default_branch && inputs.fail_test == true }}", "must itself be gated on the default branch"),
     ],
 )
-def test_a_cache_writer_job_that_can_run_off_the_default_branch_is_refused(copy, guard):
-    add_writer_job(copy, guard)
-    assert any("SIM_CACHE_WRITE" in line for line in policy.violations(copy))
+def test_a_cache_save_step_that_can_run_off_the_default_branch_or_with_fail_test_is_refused(copy, guard, message):
+    with_save_guard(copy, guard)
+    assert any(message in line for line in policy.violations(copy)), policy.violations(copy)
 
 
 def test_a_cache_writer_key_in_workflow_level_env_is_refused(copy):

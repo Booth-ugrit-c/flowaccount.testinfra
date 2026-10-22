@@ -41,6 +41,7 @@ EXPECTED = {
     "job_timeout": "test",
     "hygiene_failure": "infra",
     "setup_dotnet_failure": "infra",
+    "tailnet_join_failure": "infra",
     "cache_tripwire_over_a_test_failure": "infra",
     "cache_tripwire_over_a_success": "infra",
     "cache_tripwire_alone": "infra",
