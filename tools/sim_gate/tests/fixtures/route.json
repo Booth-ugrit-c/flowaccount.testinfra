@@ -1,0 +1,172 @@
+{
+ "busy": {
+  "runners": [
+   {
+    "busy": true,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   }
+  ],
+  "total_count": 1
+ },
+ "busy_and_idle": {
+  "runners": [
+   {
+    "busy": true,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   },
+   {
+    "busy": false,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-b",
+    "status": "online"
+   }
+  ],
+  "total_count": 2
+ },
+ "empty": {
+  "runners": [],
+  "total_count": 0
+ },
+ "idle": {
+  "runners": [
+   {
+    "busy": false,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   }
+  ],
+  "total_count": 1
+ },
+ "idle_other_label_busy_target": {
+  "runners": [
+   {
+    "busy": false,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "other-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   },
+   {
+    "busy": true,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-b",
+    "status": "online"
+   }
+  ],
+  "total_count": 2
+ },
+ "no_busy_field": {
+  "runners": [
+   {
+    "labels": [
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   }
+  ],
+  "total_count": 1
+ },
+ "offline": {
+  "runners": [
+   {
+    "busy": false,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "lab-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "offline"
+   }
+  ],
+  "total_count": 1
+ },
+ "other_label": {
+  "runners": [
+   {
+    "busy": false,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "other-pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   }
+  ],
+  "total_count": 1
+ },
+ "upper_label": {
+  "runners": [
+   {
+    "busy": false,
+    "labels": [
+     {
+      "name": "self-hosted"
+     },
+     {
+      "name": "Lab-Pool"
+     }
+    ],
+    "name": "vm-a",
+    "status": "online"
+   }
+  ],
+  "total_count": 1
+ }
+}

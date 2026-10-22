@@ -1,0 +1,4 @@
+The runner has received a shutdown signal
+lost communication with the server
+The operation was canceled because the runner was lost
+No space left on device

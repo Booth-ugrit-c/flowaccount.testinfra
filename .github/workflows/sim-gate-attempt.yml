@@ -1,0 +1,229 @@
+name: sim-gate-attempt
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      lane:
+        required: true
+        type: string
+      base:
+        required: true
+        type: string
+      head:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      fail_test:
+        required: false
+        default: false
+        type: boolean
+      kill_runner:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      verdict:
+        description: pass, test or infra
+        value: ${{ jobs.classify.outputs.verdict }}
+      reason:
+        description: Why an infra verdict was reached when it has a named cause, otherwise empty
+        value: ${{ jobs.classify.outputs.reason }}
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: run ${{ inputs.tag }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        if: ${{ runner.environment == 'github-hosted' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Hygiene
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: sh tools/sim_gate/prejob.sh
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: sim/dotnet/global.json
+      - name: Health
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/markers"
+          echo "MARKERS=$RUNNER_TEMP/markers" >> "$GITHUB_ENV"
+          python3 --version
+          (cd sim/dotnet && dotnet --version)
+          touch "$RUNNER_TEMP/markers/health"
+      - name: Services
+        env:
+          LANE: ${{ inputs.lane }}
+          TAG: ${{ inputs.tag }}
+          SQL_IMAGE: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+          CACHE_IMAGE: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        run: |
+          set -eu
+          if [ "$LANE" = integration ]; then
+              runner_label="sim.runner=${RUNNER_NAME}"
+              job_label="sim.job=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${TAG}"
+              docker run -d --name "sim-sql-${GITHUB_RUN_ID}-${TAG}" --label "$runner_label" --label "$job_label" \
+                  -e POSTGRES_PASSWORD=workload -p 127.0.0.1::5432 "$SQL_IMAGE"
+              docker run -d --name "sim-cache-${GITHUB_RUN_ID}-${TAG}" --label "$runner_label" --label "$job_label" \
+                  -p 127.0.0.1::6379 "$CACHE_IMAGE"
+              ready=
+              for _ in $(seq 1 60); do
+                  if docker exec "sim-sql-${GITHUB_RUN_ID}-${TAG}" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 \
+                      && docker exec "sim-cache-${GITHUB_RUN_ID}-${TAG}" sh -c 'redis-cli ping | grep -q PONG' >/dev/null 2>&1; then
+                      ready=1
+                      break
+                  fi
+                  sleep 2
+              done
+              [ -n "$ready" ] || { echo "::error::services did not become ready"; exit 1; }
+              sql_bind=$(docker port "sim-sql-${GITHUB_RUN_ID}-${TAG}" 5432/tcp | head -n 1)
+              cache_bind=$(docker port "sim-cache-${GITHUB_RUN_ID}-${TAG}" 6379/tcp | head -n 1)
+              {
+                  echo "SIM_SQL_HOST=127.0.0.1"
+                  echo "SIM_SQL_PORT=${sql_bind##*:}"
+                  echo "SIM_CACHE_HOST=127.0.0.1"
+                  echo "SIM_CACHE_PORT=${cache_bind##*:}"
+              } >> "$GITHUB_ENV"
+          fi
+          touch "$MARKERS/services"
+      - name: Affected
+        env:
+          BASE_REF: ${{ inputs.base }}
+          HEAD_REF: ${{ inputs.head }}
+        run: python3 -m tools.sim_gate.affected --base "$BASE_REF" --head "$HEAD_REF" > "$RUNNER_TEMP/affected.json"
+      - name: Build
+        working-directory: sim/dotnet
+        env:
+          LANE: ${{ inputs.lane }}
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+          DOTNET_NOLOGO: "1"
+          MSBUILDDISABLENODEREUSE: "1"
+          DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+        run: |
+          set -eu
+          python3 -c 'import json, sys; sys.stdout.buffer.write(("\n".join(json.load(open(sys.argv[1]))[sys.argv[2]]) + "\n").encode())' \
+              "$RUNNER_TEMP/affected.json" build > "$RUNNER_TEMP/build.txt"
+          while IFS= read -r project; do
+              [ -n "$project" ] || continue
+              case "$project" in
+                  *IntegrationTests*) [ "$LANE" = integration ] || continue ;;
+              esac
+              dotnet build "$GITHUB_WORKSPACE/$project" -c Release --disable-build-servers -p:IncludeSourceRevisionInInformationalVersion=false
+          done < "$RUNNER_TEMP/build.txt"
+          touch "$MARKERS/build"
+      - name: Test
+        working-directory: sim/dotnet
+        env:
+          LANE: ${{ inputs.lane }}
+          FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}
+          KILL_RUNNER: ${{ inputs.kill_runner }}
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+          DOTNET_NOLOGO: "1"
+          MSBUILDDISABLENODEREUSE: "1"
+          DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+        run: |
+          set -u
+          touch "$MARKERS/test-start"
+          if [ "$KILL_RUNNER" = true ]; then
+              sh "$GITHUB_WORKSPACE/tools/sim_gate/kill_own_runner.sh" || exit 1
+              sleep 600
+          fi
+          python3 -c 'import json, sys; sys.stdout.buffer.write(("\n".join(json.load(open(sys.argv[1]))[sys.argv[2]]) + "\n").encode())' \
+              "$RUNNER_TEMP/affected.json" test > "$RUNNER_TEMP/test.txt"
+          status=0
+          injected=0
+          case "$LANE" in
+              integration) filter="Category=integration" ;;
+              *) filter="Category!=integration" ;;
+          esac
+          while IFS= read -r project; do
+              [ -n "$project" ] || continue
+              case "$project" in
+                  *IntegrationTests*) [ "$LANE" = integration ] || continue ;;
+                  *) [ "$LANE" = unit ] || continue ;;
+              esac
+              if [ "$FAIL_TEST" = 1 ] && [ "$injected" = 0 ]; then
+                  printf '%s\n' 'using Xunit;' 'public class ForcedFailure' '{' '    [Fact]' \
+                      '    public void Asserts_the_wrong_value() => Assert.Equal(2, 1);' '}' > "$(dirname "$GITHUB_WORKSPACE/$project")/ForcedFailure.cs"
+                  injected=1
+              fi
+              dotnet test "$GITHUB_WORKSPACE/$project" -c Release --filter "$filter" --disable-build-servers -p:IncludeSourceRevisionInInformationalVersion=false || status=1
+          done < "$RUNNER_TEMP/test.txt"
+          touch "$MARKERS/test-end"
+          exit "$status"
+      - name: Remove services
+        if: ${{ always() && inputs.lane == 'integration' }}
+        env:
+          JOB_LABEL: sim.job=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.tag }}
+        run: |
+          ids=$(docker ps -aq --filter "label=${JOB_LABEL}")
+          [ -z "$ids" ] || printf '%s\n' "$ids" | xargs docker rm -f
+      - name: Upload markers
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: markers-${{ inputs.tag }}
+          path: ${{ runner.temp }}/markers
+          if-no-files-found: ignore
+          retention-days: 1
+
+  classify:
+    name: classify ${{ inputs.tag }}
+    needs: run
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+      reason: ${{ steps.verdict.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Classify
+        id: verdict
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JOB_SUFFIX: run ${{ inputs.tag }}
+          ARTIFACT_NAME: markers-${{ inputs.tag }}
+        run: |
+          set -eu
+          verdict=$(python3 -m tools.sim_gate.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --reason-file "$RUNNER_TEMP/reason.txt")
+          case "$verdict" in
+              pass | test | infra) ;;
+              *) verdict="test" ;;
+          esac
+          reason=
+          [ ! -f "$RUNNER_TEMP/reason.txt" ] || reason=$(cat "$RUNNER_TEMP/reason.txt")
+          case "$reason" in
+              *[!A-Za-z0-9\ _-]*) reason= ;;
+          esac
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
