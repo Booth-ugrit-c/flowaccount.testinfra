@@ -298,3 +298,17 @@ def test_fetch_extracts_the_cache_tripwire_marker(api, tmp_path):
     fetch(api, tmp_path)
     assert (tmp_path / "job" / "markers" / "cache-tripwire").exists()
     assert classify.classify_dir(tmp_path / "job") == "infra"
+
+
+def test_cli_writes_the_reason_to_the_reason_file(tmp_path):
+    reason = tmp_path / "reason.txt"
+    out = run_cli(case_dir(tmp_path, "cache_tripwire_over_a_test_failure"), args=["--reason-file", str(reason)])
+    assert out.stdout == "infra" + chr(10)
+    assert reason.read_text() == "cache tripwire"
+
+
+def test_cli_writes_an_empty_reason_file_when_there_is_no_reason(tmp_path):
+    reason = tmp_path / "reason.txt"
+    out = run_cli(case_dir(tmp_path, "runner_lost_log"), args=["--reason-file", str(reason)])
+    assert out.stdout == "infra" + chr(10)
+    assert reason.read_text() == ""

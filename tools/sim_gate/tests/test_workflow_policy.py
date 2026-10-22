@@ -229,6 +229,24 @@ MUTATIONS = {
         "          dotnet-version: 10.0.x",
         "setup-dotnet must use global-json-file",
     ),
+    "classify without the reason file": (
+        ATTEMPT,
+        ' --reason-file "$RUNNER_TEMP/reason.txt"',
+        "",
+        "does not capture the infra reason",
+    ),
+    "gate without the unit reason": (
+        TOP,
+        '            --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" \\\n',
+        "",
+        "infra reason of lane unit",
+    ),
+    "lane without the retry reason output": (
+        LANE,
+        "      retry_reason:" + chr(10),
+        "      retry_renamed:" + chr(10),
+        "does not output retry_reason",
+    ),
     "environment on the attempt job": (
         ATTEMPT,
         "    runs-on: ${{ inputs.runner }}\n    timeout-minutes: 25",

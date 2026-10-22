@@ -127,3 +127,56 @@ def test_cli_usage_error_is_nonzero_and_never_green():
         out = run_cli(args)
         assert out.returncode != 0
         assert "gate: pass" not in out.stdout
+
+
+TRIPWIRE = "red [infra: cache tripwire]"
+REASON = {"unit": "cache tripwire"}
+
+
+@pytest.mark.parametrize(
+    "lanes, reasons, expected",
+    [
+        ([("unit", "infra", "")], REASON, TRIPWIRE),
+        ([("unit", "infra", "infra")], REASON, TRIPWIRE),
+        ([("unit", "infra", "pass")], REASON, PASS),
+        ([("unit", "test", "")], REASON, TEST),
+        ([("unit", "pass", "")], REASON, PASS),
+        ([("unit", "infra", "test")], REASON, TEST),
+        ([("unit", "infra", "infra"), ("integration", "test", "")], REASON, TEST),
+        ([("unit", "infra", "infra"), ("integration", "infra", "infra")], REASON, TRIPWIRE),
+        ([("unit", "infra", "infra")], {"unit": ""}, INFRA_TWICE),
+        ([("unit", "infra", "")], {}, INFRA_ONCE),
+        ([("unit", "infra", "")], {"other": "cache tripwire"}, INFRA_ONCE),
+    ],
+)
+def test_a_reason_on_an_infra_lane_names_the_infra_verdict(lanes, reasons, expected):
+    assert gate.overall(lanes, reasons) == expected
+
+
+def test_summary_shows_the_reason_in_the_lane_row_and_the_result():
+    text = gate.summary([("unit", "infra", "infra")], TRIPWIRE, REASON)
+    assert "| unit | infra | infra | red [infra: cache tripwire] |" in text
+    assert f"Result: **{TRIPWIRE}**" in text
+
+
+@pytest.mark.parametrize("raw", ["unit", "=x", "unit=a|b", "unit=a\nb", "unit=" + "x" * 41, "bad name=x"])
+def test_parse_reason_rejects_malformed_input(raw):
+    with pytest.raises(ValueError):
+        gate.parse_reason(raw)
+
+
+def test_parse_reason_accepts_a_plain_phrase_and_an_empty_one():
+    assert gate.parse_reason("unit=cache tripwire") == ("unit", "cache tripwire")
+    assert gate.parse_reason("unit=") == ("unit", "")
+
+
+def test_cli_renders_the_tripwire_in_stdout_exit_code_and_summary(tmp_path):
+    summary = tmp_path / "summary.md"
+    out = run_cli(["--lane", "unit=infra,infra", "--reason", "unit=cache tripwire"], summary)
+    assert (out.returncode, out.stdout.strip()) == (1, f"gate: {TRIPWIRE}")
+    assert TRIPWIRE in summary.read_text()
+
+
+def test_cli_ignores_an_empty_reason(tmp_path):
+    out = run_cli(["--lane", "unit=infra,infra", "--reason", "unit="])
+    assert out.stdout.strip() == f"gate: {INFRA_TWICE}"

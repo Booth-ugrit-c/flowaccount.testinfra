@@ -109,7 +109,13 @@ jobs:
           UNIT_RETRY: ${{ needs.unit.outputs.retry_verdict }}
           INTEGRATION_ATTEMPT: ${{ needs.integration.outputs.attempt_verdict }}
           INTEGRATION_RETRY: ${{ needs.integration.outputs.retry_verdict }}
+          UNIT_ATTEMPT_REASON: ${{ needs.unit.outputs.attempt_reason }}
+          UNIT_RETRY_REASON: ${{ needs.unit.outputs.retry_reason }}
+          INTEGRATION_ATTEMPT_REASON: ${{ needs.integration.outputs.attempt_reason }}
+          INTEGRATION_RETRY_REASON: ${{ needs.integration.outputs.retry_reason }}
         run: |
           python3 -m tools.sim_gate.gate \
             --lane "unit=${UNIT_ATTEMPT},${UNIT_RETRY}" \
-            --lane "integration=${INTEGRATION_ATTEMPT},${INTEGRATION_RETRY}"
+            --lane "integration=${INTEGRATION_ATTEMPT},${INTEGRATION_RETRY}" \
+            --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" \
+            --reason "integration=${INTEGRATION_RETRY_REASON:-$INTEGRATION_ATTEMPT_REASON}"

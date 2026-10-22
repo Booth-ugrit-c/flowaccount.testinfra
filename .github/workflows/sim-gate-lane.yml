@@ -31,9 +31,15 @@ on:
       attempt_verdict:
         description: Classification of the first attempt
         value: ${{ jobs.attempt.outputs.verdict }}
+      attempt_reason:
+        description: Named cause of an infra verdict on the first attempt, otherwise empty
+        value: ${{ jobs.attempt.outputs.reason }}
       retry_verdict:
         description: Classification of the cloud retry, empty when it did not run
         value: ${{ jobs.retry.outputs.verdict }}
+      retry_reason:
+        description: Named cause of an infra verdict on the cloud retry, otherwise empty
+        value: ${{ jobs.retry.outputs.reason }}
 
 permissions:
   contents: read

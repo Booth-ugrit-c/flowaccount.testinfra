@@ -30,6 +30,9 @@ on:
       verdict:
         description: pass, test or infra
         value: ${{ jobs.classify.outputs.verdict }}
+      reason:
+        description: Why an infra verdict was reached when it has a named cause, otherwise empty
+        value: ${{ jobs.classify.outputs.reason }}
 
 permissions:
   contents: read
@@ -193,6 +196,7 @@ jobs:
       checks: read
     outputs:
       verdict: ${{ steps.verdict.outputs.verdict }}
+      reason: ${{ steps.verdict.outputs.reason }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,9 +214,15 @@ jobs:
           ARTIFACT_NAME: markers-${{ inputs.tag }}
         run: |
           set -eu
-          verdict=$(python3 -m tools.sim_gate.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME")
+          verdict=$(python3 -m tools.sim_gate.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --reason-file "$RUNNER_TEMP/reason.txt")
           case "$verdict" in
               pass | test | infra) ;;
               *) verdict="test" ;;
           esac
+          reason=
+          [ ! -f "$RUNNER_TEMP/reason.txt" ] || reason=$(cat "$RUNNER_TEMP/reason.txt")
+          case "$reason" in
+              *[!A-Za-z0-9\ _-]*) reason= ;;
+          esac
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"

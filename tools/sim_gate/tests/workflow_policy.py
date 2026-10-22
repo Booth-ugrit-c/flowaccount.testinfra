@@ -380,6 +380,16 @@ def violations(directory):
                 found.append(f"{name}: job {job_id} runs dotnet without a prior actions/setup-dotnet step")
             elif steps[setup].get("with", {}).get("global-json-file") != DOTNET_GLOBAL_JSON:
                 found.append(f"{name}: job {job_id} setup-dotnet must use global-json-file {DOTNET_GLOBAL_JSON}")
+    classify_run = next(st["run"] for st in attempt["classify"]["steps"] if st.get("id") == "verdict")
+    if "--reason-file" not in classify_run:
+        found.append("classify step does not capture the infra reason")
+    gate_run = next(st["run"] for st in docs["sim-gate.yml"]["jobs"]["gate"]["steps"] if st["name"] == "Decide")
+    for lane in ("unit", "integration"):
+        if f'--reason "{lane}=' not in gate_run:
+            found.append(f"gate does not pass the infra reason of lane {lane}")
+    for output in ("attempt_reason", "retry_reason"):
+        if output not in docs["sim-gate-lane.yml"]["on"]["workflow_call"]["outputs"]:
+            found.append(f"lane workflow does not output {output}")
     if "environment" in attempt["run"]:
         found.append("the attempt job must not use an environment")
     return found

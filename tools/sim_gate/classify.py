@@ -17,6 +17,7 @@ FINGERPRINTS = Path(__file__).with_name("fingerprints.txt")
 PHASE_MARKERS = ("health", "services", "build", "test-start", "test-end")
 TRIPWIRE_MARKER = "cache-tripwire"
 KNOWN_MARKERS = PHASE_MARKERS + (TRIPWIRE_MARKER,)
+TRIPWIRE_REASON = "cache tripwire"
 STEP_TEST = "Test"
 INFRA_STEPS = ("Set up job", "Hygiene", "Set up .NET", "Health", "Services")
 TIMEOUT_TEXT = "exceeded the maximum execution time"
@@ -195,13 +196,17 @@ def main(argv):
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--fetch-job")
     parser.add_argument("--fetch-artifact")
+    parser.add_argument("--reason-file")
     args = parser.parse_args(argv)
     try:
         if args.fetch_job and args.fetch_artifact:
             fetch_attempt(os.environ, args.job_dir, args.fetch_job, args.fetch_artifact)
         verdict = classify_dir(args.job_dir)
-        if read_markers(Path(args.job_dir) / "markers") >= {TRIPWIRE_MARKER}:
+        tripped = TRIPWIRE_MARKER in read_markers(Path(args.job_dir) / "markers")
+        if tripped:
             print("classify: infra: cache tripwire", file=sys.stderr)
+        if args.reason_file:
+            Path(args.reason_file).write_text(TRIPWIRE_REASON if tripped else "", encoding="utf-8")
     except Exception as exc:
         print(f"classify: {type(exc).__name__}", file=sys.stderr)
         verdict = "test"
