@@ -65,14 +65,14 @@ def test_the_shipped_workflows_satisfy_the_policy():
 MUTATIONS = {
     "token on a step of a work job": (
         BUILD,
-        "      - name: Health\n        run: |",
-        "      - name: Health\n        env:\n          SIM_ROUTE_TOKEN: ${{ secrets.SIM_ROUTE_TOKEN }}\n        run: |",
+        "      - name: Health\n        env:\n",
+        "      - name: Health\n        env:\n          SIM_ROUTE_TOKEN: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
         "referenced outside the route job",
     ),
     "token passed to the called route workflow": (
         BUILD,
-        "      runner_label: ${{ inputs.runner_label }}\n",
-        "      runner_label: ${{ inputs.runner_label }}\n      token: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n      token: ${{ secrets.SIM_ROUTE_TOKEN }}\n",
         "referenced outside the route job",
     ),
     "token in a second step of the route job": (
@@ -156,7 +156,7 @@ MUTATIONS = {
     ),
     "route call with another label": (
         BUILD,
-        "      runner_label: ${{ inputs.runner_label }}\n",
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
         "      runner_label: ${{ inputs.pr_branch }}\n",
         "the route job must call tpl-route.yml",
     ),
@@ -290,7 +290,7 @@ MUTATIONS = {
         "          HEAD_SHA: ${{ inputs.pr_branch }}\n",
         "must use the checked-out head",
     ),
-    "continue-on-error on a job": (TOP, "    timeout-minutes: 5\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "    timeout-minutes: 5\n    continue-on-error: true\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "continue-on-error at jobs.gate"),
+    "continue-on-error on a job": (TOP, "    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n    continue-on-error: true\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "continue-on-error at jobs.gate"),
     "secrets inherit": (TOP, "    uses: ./.github/workflows/tpl-dotnet-build.yml", "    secrets: inherit\n    uses: ./.github/workflows/tpl-dotnet-build.yml", "secrets: inherit"),
     "write permission": (TOP, "      checks: read\n      id-token: write\n", "      checks: write\n      id-token: write\n", "permission jobs.build.permissions.checks is write"),
     "workflow permissions widened": (BUILD, "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: write\n\njobs:", "workflow permissions must be contents: read only"),
@@ -469,10 +469,10 @@ MUTATIONS = {
         "on:\n  workflow_run:\n    workflows: [sim-gate]\n  workflow_dispatch:",
         "sim-retest.yml: forbidden trigger workflow_run",
     ),
-    "the retest stand-in stub asking for actions write": (
+    "the retest stand-in with read-only actions": (
         RETEST,
-        "    timeout-minutes: 1\n",
-        "    timeout-minutes: 1\n    permissions:\n      contents: read\n      actions: read\n",
+        "      contents: read\n      actions: write\n",
+        "      contents: read\n      actions: read\n",
         "sim-retest.yml: job requeue permissions are",
     ),
     "the gate job given actions read": (
@@ -539,8 +539,8 @@ MUTATIONS = {
     "an endpoint in the Build step env": (BUILD, BUILD_STEP, BUILD_STEP + ENDPOINT, "secret SIM_CACHE_ENDPOINT_LAB is read at a place that is not allowed"),
     "a reader key in the Health step": (
         BUILD,
-        "      - name: Health\n        run: |",
-        "      - name: Health\n        env:\n" + READER + "        run: |",
+        "      - name: Health\n        env:\n",
+        "      - name: Health\n        env:\n" + READER,
         "secret SIM_CACHE_READ_KEY_ID is read at a place that is not allowed",
     ),
     "a writer key in the restore step": (
@@ -945,6 +945,147 @@ MUTATIONS = {
         "    name: build\n    needs:\n      - validate\n      - gate\n",
         "the build job must need validate",
     ),
+    "the comment job without pull-requests write": (
+        TOP,
+        "      actions: read\n      pull-requests: write\n",
+        "      actions: read\n",
+        "sim-gate.yml: job comment permissions are",
+    ),
+    "the comment job with contents write": (
+        TOP,
+        "    permissions:\n      contents: read\n      actions: read\n      pull-requests: write\n",
+        "    permissions:\n      contents: write\n      actions: read\n      pull-requests: write\n",
+        "permission jobs.comment.permissions.contents is write",
+    ),
+    "the requeue job with read-only actions": (TOP, "      contents: read\n      actions: write\n", "      contents: read\n      actions: read\n", "sim-gate.yml: job requeue permissions are"),
+    "pull-requests write on the gate job": (
+        TOP,
+        "    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n",
+        "    permissions:\n      contents: read\n      pull-requests: write\n    outputs:\n      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n",
+        "permission jobs.gate.permissions.pull-requests is write",
+    ),
+    "the comment job on a run without a PR number": (
+        TOP,
+        "    if: ${{ always() && needs.validate.outputs.pr_number != '' }}\n",
+        "    if: ${{ always() }}\n",
+        "the comment job must be exactly the pinned job",
+    ),
+    "the comment job upserting another file": (
+        TOP,
+        '--state "$RUNNER_TEMP/verdict/verdict.json"',
+        '--state "$GITHUB_WORKSPACE/verdict.json"',
+        "the comment job must be exactly the pinned job",
+    ),
+    "the comment job downloading another run's verdict": (
+        TOP,
+        "          name: sim-gate-verdict\n          path: ${{ runner.temp }}/verdict\n",
+        '          name: sim-gate-verdict\n          path: ${{ runner.temp }}/verdict\n          run-id: "1"\n',
+        "the comment job must be exactly the pinned job",
+    ),
+    "the requeue job on a retest run": (
+        TOP,
+        "needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && ",
+        "github.run_attempt == '1' && ",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job on a re-run attempt": (
+        TOP,
+        "needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && ",
+        "needs.validate.outputs.retest_of == '' && ",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job without retest lanes": (
+        TOP,
+        " && needs.gate.outputs.retest_lanes != '' }}\n",
+        " }}\n",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job dispatching on the default branch": (
+        TOP,
+        '--ref "$GITHUB_REF_NAME" -f run_id="$GITHUB_RUN_ID"',
+        '--ref main -f run_id="$GITHUB_RUN_ID"',
+        "the requeue job must be exactly the pinned job",
+    ),
+    "the requeue job without the branch check": (
+        TOP,
+        '          [ "$GITHUB_REF" = "refs/heads/${GITHUB_REF_NAME}" ]\n',
+        "",
+        "the requeue job must be exactly the pinned job",
+    ),
+    "an extra job in the entry": (
+        TOP,
+        "\n  requeue:\n    name: requeue\n",
+        "\n  extra:\n    name: extra\n    runs-on: ubuntu-24.04\n    timeout-minutes: 1\n    steps:\n      - name: Echo\n        run: echo x\n\n  requeue:\n    name: requeue\n",
+        "the pinned set and order is",
+    ),
+    "the stand-in retesting another workflow": (
+        RETEST,
+        "--workflow sim-gate.yml",
+        "--workflow sim-retest.yml",
+        "the stand-in must be exactly the one pinned requeue job",
+    ),
+    "the stand-in waiting longer than its job": (
+        RETEST,
+        '--run-id "$RUN_ID" --workflow sim-gate.yml',
+        '--run-id "$RUN_ID" --workflow sim-gate.yml --wait 3600',
+        "the stand-in must be exactly the one pinned requeue job",
+    ),
+    "the stand-in without concurrency": (
+        RETEST,
+        "concurrency:\n  group: ${{ format('sim-retest-{0}', inputs.run_id) }}\n  cancel-in-progress: false\n",
+        "",
+        "the stand-in concurrency must be exactly",
+    ),
+    "the stand-in concurrency keyed on its own run": (
+        RETEST,
+        "  group: ${{ format('sim-retest-{0}', inputs.run_id) }}\n",
+        "  group: ${{ format('sim-retest-{0}', github.run_id) }}\n",
+        "the stand-in concurrency must be exactly",
+    ),
+    "the stand-in with a second input": (
+        RETEST,
+        "        required: true\n        type: string\n",
+        "        required: true\n        type: string\n      lanes:\n        required: false\n        type: string\n",
+        "the stand-in takes exactly one required input",
+    ),
+    "the gate retest lanes hardcoded": (
+        TOP,
+        "      retest_lanes: ${{ steps.decide.outputs.retest_lanes }}\n",
+        "      retest_lanes: unit\n",
+        "the gate job outputs must be exactly retest_lanes",
+    ),
+    "the Decide step without its id": (TOP, "      - name: Decide\n        id: decide\n", "      - name: Decide\n", DECIDE_PIN),
+    "the Health step failing on every fault": (
+        BUILD,
+        "          FAIL_HEALTH: ${{ inputs.sim_fault == 'fail_health_twice' || inputs.sim_fault == 'fail_health_once' && inputs.retest != true }}\n",
+        "          FAIL_HEALTH: ${{ inputs.sim_fault != '' }}\n",
+        "the Health step fails=True for fault 'fail_test'",
+    ),
+    "the Health step failing once even on the retest": (
+        BUILD,
+        " || inputs.sim_fault == 'fail_health_once' && inputs.retest != true }}\n",
+        " || inputs.sim_fault == 'fail_health_once' }}\n",
+        "the Health step fails=True for fault 'fail_health_once' with retest True",
+    ),
+    "the Health step ignoring the fault": (
+        BUILD,
+        '          if [ "$FAIL_HEALTH" = true ]; then\n',
+        '          if [ "$FAIL_HEALTH" = never ]; then\n',
+        "the Health step must be exactly the pinned step",
+    ),
+    "the build routed to the lab on a retest": (
+        BUILD,
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
+        "      runner_label: ${{ inputs.runner_label }}\n",
+        "a retest always runs on the cloud",
+    ),
+    "the lane routed to the lab on a retest": (
+        LANE,
+        "      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}\n",
+        "      runner_label: ${{ inputs.runner_label }}\n",
+        "a retest always runs on the cloud",
+    ),
+    "the fail_health_twice fault option dropped": (TOP, "          - fail_health_twice\n", "", "fault options are"),
 }
 
 

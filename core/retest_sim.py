@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from core.classify import TRIPWIRE_REASON
 from core.comment import BRANCH, RUN_ID, SHA, Refused, call, call_json, fetch_state, text
+from core.gate import BUILD
 from core.route import REPOSITORY, api_base
 
 WORKFLOW = r"[A-Za-z0-9._-]{1,100}\.ya?ml"
@@ -94,7 +95,9 @@ def run(env, run_id, workflow, wait, poll, sleep=time.sleep, clock=time.monotoni
     state = fetch_state(base, repository, token, run_id)
     if state["run_id"] != run_id:
         raise Refused("verdict run id")
-    lanes = retest_lanes(state)
+    lanes = [lane for lane in retest_lanes(state) if lane != BUILD]
+    if not lanes:
+        raise NoDispatch("no test lane to retest")
     inputs = state["inputs"]
     if inputs["pr_sha"] != gate_run["head_sha"]:
         raise NoDispatch("verdict commit differs from the run commit")

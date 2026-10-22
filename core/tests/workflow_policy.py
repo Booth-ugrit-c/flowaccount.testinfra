@@ -296,11 +296,12 @@ RUNNER = "${{ needs.route.outputs.target == 'onprem' && inputs.runner_label || '
 SOLUTION_GLOBAL_JSON = "${{ inputs.solution_root }}/global.json"
 CACHE_BUILD = "adapters/dotnet/cache_build.sh"
 FULL_SHA = "0123456789abcdef0123456789abcdef01234567"
-FAULTS = ("none", "fail_test", "kill_onprem", "kill_both")
-SIM_FAULTS = ("", "fail_test", "kill_onprem", "kill_both", "other")
+FAULTS = ("none", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice")
+SIM_FAULTS = ("", "fail_test", "kill_onprem", "kill_both", "fail_health_once", "fail_health_twice", "other")
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
 UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 
 SECRET_REF = re.compile(r"""\bsecrets\s*[.\[]\s*['"]?([A-Za-z0-9_]+)""")
 ENDPOINT_NAMES = ("SIM_CACHE_ENDPOINT_LAB", "SIM_CACHE_ENDPOINT_TAILNET")
@@ -324,8 +325,12 @@ PERMISSION_MAP = {
     (BUILD, "run"): {"contents": "read", "id-token": "write"},
     (BUILD, "classify"): CLASSIFY_PERMISSIONS,
     (LANE, "classify"): CLASSIFY_PERMISSIONS,
+    (ENTRY, "comment"): {"contents": "read", "actions": "read", "pull-requests": "write"},
+    (ENTRY, "requeue"): {"contents": "read", "actions": "write"},
+    (RETEST, "requeue"): {"contents": "read", "actions": "write"},
 }
 ID_TOKEN_PLACES = {(name, ("jobs", job, "permissions")) for (name, job), wanted in PERMISSION_MAP.items() if "id-token" in wanted}
+WRITE_PLACES = {(name, ("jobs", job, "permissions", scope)) for (name, job), wanted in PERMISSION_MAP.items() for scope, level in wanted.items() if level == "write"}
 
 DOTNET_ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1", "MSBUILDDISABLENODEREUSE": "1", "DOTNET_CLI_USE_MSBUILD_SERVER": "0"}
 FAIL_TEST_ENV = "${{ inputs.sim_fault == 'fail_test' && '1' || '0' }}"
@@ -353,7 +358,20 @@ sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/h
 SAVE_RUN = f'sh {CACHE_BUILD} save "$RUNNER_TEMP/built.txt"'
 ARTIFACT = "dotnet-build-${{ github.run_attempt }}"
 SAVE_ENV = {"SIM_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}", "SIM_CACHE_MODE": "${{ inputs.cache }}", **WRITER_ENV}
+FAIL_HEALTH_ENV = "${{ inputs.sim_fault == 'fail_health_twice' || inputs.sim_fault == 'fail_health_once' && inputs.retest != true }}"
+HEALTH_RUN = """set -eu
+mkdir -p "$RUNNER_TEMP/markers"
+echo "MARKERS=$RUNNER_TEMP/markers" >> "$GITHUB_ENV"
+if [ "$FAIL_HEALTH" = true ]; then
+    echo "::error::injected health failure"
+    exit 1
+fi
+python3 --version
+(cd "$SIM_ROOT" && dotnet --version)
+touch "$RUNNER_TEMP/markers/health"
+"""
 BUILD_PINS = {
+    "Health": {"name": "Health", "env": {"FAIL_HEALTH": FAIL_HEALTH_ENV}, "run": HEALTH_RUN},
     TRIPWIRE_STEP: {"name": TRIPWIRE_STEP, "env": {"SIM_TAILNET_JOIN": "${{ steps.join.outcome }}", **READER_ENV}, "run": TRIPWIRE_RUN},
     RESTORE_STEP: {"name": RESTORE_STEP, "env": {"FAIL_TEST": FAIL_TEST_ENV, "SIM_CACHE_MODE": "${{ inputs.cache }}", **READER_ENV}, "run": RESTORE_RUN},
     "Build": {"name": "Build", "env": {"FAIL_TEST": FAIL_TEST_ENV, **DOTNET_ENV}, "run": BUILD_RUN},
@@ -879,6 +897,7 @@ def hygiene_violations(docs):
     return found
 
 
+ROUTE_LABEL = "${{ inputs.retest != true && inputs.runner_label || '' }}"
 LABELS = {"build": "SIM_LAB_LABEL_BUILD", "unit": "SIM_LAB_LABEL_UNIT", "integration": "SIM_LAB_LABEL_INTEGRATION"}
 
 
@@ -899,8 +918,15 @@ def runner_violations(docs):
     for name in WORK:
         jobs = docs[name]["jobs"]
         route = jobs.get("route", {})
-        if str(route.get("uses", "")).split(" ")[0] != ROUTE_USES or route.get("with") != {"runner_label": "${{ inputs.runner_label }}"}:
-            found.append(f"{name}: the route job must call {ROUTE} with runner_label: ${{{{ inputs.runner_label }}}} and nothing else")
+        if str(route.get("uses", "")).split(" ")[0] != ROUTE_USES or route.get("with") != {"runner_label": ROUTE_LABEL}:
+            found.append(f"{name}: the route job must call {ROUTE} with runner_label: {ROUTE_LABEL} and nothing else")
+        given = str(route.get("with", {}).get("runner_label", ""))
+        for retest in (True, False):
+            for label in ("", "lab"):
+                got = evaluate(given, {"inputs.retest": retest, "inputs.runner_label": label})
+                want = "" if retest else label
+                if not _loose_equal(got, want):
+                    found.append(f"{name}: the route is asked about {got!r} for retest {retest} and label {label!r}; a retest always runs on the cloud")
         run = jobs["run"]
         if run.get("needs") != "route" or str(run.get("if")) != "${{ !cancelled() }}":
             found.append(f"{name}: the run job must need route and run unless cancelled, so a skipped route falls back to the cloud")
@@ -961,6 +987,12 @@ def fault_violations(docs):
     for fault in SIM_FAULTS:
         if (evaluate(str(fail_test), {"inputs.sim_fault": fault}) == "1") != (fault == "fail_test"):
             found.append(f"{BUILD}: the Build step injects the failing test for fault {fault!r}; only fail_test may")
+    health = step_named(docs, BUILD, "Health").get("env", {}).get("FAIL_HEALTH", "")
+    for fault in SIM_FAULTS:
+        for retest in (True, False):
+            got = truthy(evaluate(str(health), {"inputs.sim_fault": fault, "inputs.retest": retest}))
+            if got != (fault == "fail_health_twice" or fault == "fail_health_once" and not retest):
+                found.append(f"{BUILD}: the Health step fails={got} for fault {fault!r} with retest {retest}")
     kill = step_named(docs, LANE, "Test").get("env", {}).get("KILL_RUNNER", "")
     for fault in SIM_FAULTS:
         for target in ("onprem", "cloud", ""):
@@ -1130,13 +1162,90 @@ def lane_set_violations(docs):
     if sorted(needs) != sorted(["validate", "build", *lanes]):
         found.append(f"{ENTRY}: the gate must need validate, build and every lane, has {needs}")
     ordered = sorted(lanes, key=list(jobs).index)
-    if decide.get("run") != decide_run(ordered) or decide.get("env") != decide_env(ordered) or set(decide) != {"name", "env", "run"}:
+    if decide.get("run") != decide_run(ordered) or decide.get("env") != decide_env(ordered) or set(decide) != {"name", "id", "env", "run"} or decide.get("id") != "decide":
         found.append(f"{ENTRY}: the Decide step must be exactly the pinned gate invocation and env for build and the selected lanes")
     names = [st.get("name") for st in steps]
     if names != ["Checkout", "Set up Python", "Decide", "Upload verdict"] or steps[-1] != VERDICT_UPLOAD:
         found.append(f"{ENTRY}: the gate job must be Checkout, Set up Python, Decide, then the pinned Upload verdict of sim-gate-verdict")
     if str(gate.get("if")) != "${{ always() }}":
         found.append(f"{ENTRY}: the gate must run always")
+    if gate.get("outputs") != {"retest_lanes": "${{ steps.decide.outputs.retest_lanes }}"}:
+        found.append(f"{ENTRY}: the gate job outputs must be exactly retest_lanes from the Decide step")
+    return found + report_violations(docs)
+
+
+COMMENT_JOB = {
+    "name": "comment",
+    "needs": ["validate", "gate"],
+    "if": "${{ always() && needs.validate.outputs.pr_number != '' }}",
+    "runs-on": HOSTED,
+    "timeout-minutes": "5",
+    "permissions": PERMISSION_MAP[(ENTRY, "comment")],
+    "steps": [
+        {"name": "Checkout", "uses": CHECKOUT, "with": {"persist-credentials": "false"}},
+        {"name": "Set up Python", "uses": SETUP_PYTHON, "with": {"python-version": "3.12"}},
+        {"name": "Download verdict", "uses": DOWNLOAD, "with": {"name": "sim-gate-verdict", "path": "${{ runner.temp }}/verdict"}},
+        {
+            "name": "Upsert",
+            "env": {
+                "GITHUB_TOKEN": "${{ github.token }}",
+                "PR_NUMBER": "${{ needs.validate.outputs.pr_number }}",
+                "STACK": "${{ inputs.stack }}",
+                "RUN_URL": "${{ format('{0}/{1}/actions/runs/{2}/attempts/{3}', github.server_url, github.repository, github.run_id, github.run_attempt) }}",
+            },
+            "run": 'python3 -m core.comment upsert --pr "$PR_NUMBER" --marker "sim-gate:${STACK}" --state "$RUNNER_TEMP/verdict/verdict.json" --run-url "$RUN_URL"',
+        },
+    ],
+}
+REQUEUE_RUN = """set -eu
+[ "$GITHUB_REF" = "refs/heads/${GITHUB_REF_NAME}" ]
+gh workflow run sim-retest.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f run_id="$GITHUB_RUN_ID"
+"""
+REQUEUE_JOB = {
+    "name": "requeue",
+    "needs": ["validate", "gate"],
+    "if": "${{ always() && needs.validate.outputs.retest_of == '' && github.run_attempt == '1' && needs.gate.outputs.retest_lanes != '' }}",
+    "runs-on": HOSTED,
+    "timeout-minutes": "5",
+    "permissions": PERMISSION_MAP[(ENTRY, "requeue")],
+    "steps": [{"name": "Dispatch the retest stand-in", "env": {"GH_TOKEN": "${{ github.token }}"}, "run": REQUEUE_RUN}],
+}
+RETEST_JOB = {
+    "name": "requeue",
+    "runs-on": HOSTED,
+    "timeout-minutes": "20",
+    "permissions": PERMISSION_MAP[(RETEST, "requeue")],
+    "steps": [
+        {"name": "Checkout", "uses": CHECKOUT, "with": {"persist-credentials": "false"}},
+        {"name": "Set up Python", "uses": SETUP_PYTHON, "with": {"python-version": "3.12"}},
+        {
+            "name": "Retest",
+            "env": {"GITHUB_TOKEN": "${{ github.token }}", "RUN_ID": "${{ inputs.run_id }}"},
+            "run": 'python3 -m core.retest_sim run --run-id "$RUN_ID" --workflow sim-gate.yml',
+        },
+    ],
+}
+RETEST_INPUTS = {"run_id": {"description": "The sim-gate run to consider for a retest", "required": "true", "type": "string"}}
+RETEST_CONCURRENCY = {"group": "${{ format('sim-retest-{0}', inputs.run_id) }}", "cancel-in-progress": "false"}
+ENTRY_JOBS = ["validate", "build", "unit", "integration", "gate", "comment", "requeue"]
+
+
+def report_violations(docs):
+    found = []
+    jobs = docs[ENTRY]["jobs"]
+    if list(jobs) != ENTRY_JOBS:
+        found.append(f"{ENTRY}: the jobs are {list(jobs)}, the pinned set and order is {ENTRY_JOBS}")
+    if jobs.get("comment") != COMMENT_JOB:
+        found.append(f"{ENTRY}: the comment job must be exactly the pinned job: after the gate, only with a PR number, one upsert of this run's verdict")
+    if jobs.get("requeue") != REQUEUE_JOB:
+        found.append(f"{ENTRY}: the requeue job must be exactly the pinned job: first attempt of a run that is not a retest, with retest lanes, one stand-in dispatch on this branch")
+    retest = docs[RETEST]
+    if list(retest.get("jobs", {})) != ["requeue"] or retest["jobs"].get("requeue") != RETEST_JOB:
+        found.append(f"{RETEST}: the stand-in must be exactly the one pinned requeue job running core.retest_sim against sim-gate.yml")
+    if retest.get("concurrency") != RETEST_CONCURRENCY:
+        found.append(f"{RETEST}: the stand-in concurrency must be exactly {RETEST_CONCURRENCY}, keyed on run_id")
+    if retest.get("on", {}).get("workflow_dispatch", {}).get("inputs") != RETEST_INPUTS:
+        found.append(f"{RETEST}: the stand-in takes exactly one required input, run_id")
     return found
 
 
@@ -1204,7 +1313,7 @@ WRITER_TEXT = re.compile(r"sim[-_]cache[-_]write", re.I)
 YAML_ESCAPE = re.compile(r"\\[xuUN]")
 SECRETS_WHOLE = re.compile(r"toJSON\s*\(\s*secrets\s*\)|\bsecrets\s*\[", re.I)
 THIRD_PARTY_MODULES = {"pytest", "pip"}
-EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "core.zero_tests", "adapters.dotnet.affected", "adapters.dotnet.plan"}
+EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "core.zero_tests", "core.comment", "core.retest_sim", "adapters.dotnet.affected", "adapters.dotnet.plan"}
 EXPECTED_SCRIPTS = {
     "core/resolve_refs.sh",
     "core/prejob.sh",
@@ -1375,7 +1484,7 @@ def violations(directory, root=None):
         for path, value in walk(doc):
             text = str(value)
             if "permissions" in path and value not in ("read", "none") and not (
-                value == "write" and path[-1] == "id-token" and (name, path[:-1]) in ID_TOKEN_PLACES
+                value == "write" and (name, path) in WRITE_PLACES
             ):
                 found.append(f"{name}: permission {'.'.join(map(str, path))} is {value}")
             if "github.ref_name" in text:

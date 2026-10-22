@@ -213,8 +213,18 @@ def test_lanes_are_the_infra_lanes_plus_lanes_never_run(github, capsys):
         lanes=[lane("build", "infra"), lane("unit", "none"), lane("integration", "none")],
     )
     github.artifacts["100"] = zipped(state)
-    run_tool(capsys)
-    assert [d["inputs"]["lanes"] for d in github.dispatches()] == ["build,unit,integration"]
+    out = run_tool(capsys)
+    assert [d["inputs"]["lanes"] for d in github.dispatches()] == ["unit,integration"]
+    assert out.strip().endswith("lanes=unit,integration")
+
+
+def test_never_dispatches_when_only_the_build_is_left_to_retest(github, capsys):
+    state = make_state(
+        retest_lanes=["build"],
+        lanes=[lane("build", "infra")],
+    )
+    github.artifacts["100"] = zipped(state)
+    no_dispatch(github, capsys, "no test lane to retest")
 
 
 def test_a_dispatch_error_is_reported_once_and_never_retried(github, capsys):

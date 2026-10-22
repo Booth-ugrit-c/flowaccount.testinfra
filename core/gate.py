@@ -114,6 +114,8 @@ def retest_lanes(lanes, reasons=None):
     if TRIPWIRE_REASON in (reasons or {}).values():
         return []
     judged = verdicts(lanes)
+    if any(verdict == "test" for _, verdict in judged):
+        return []
     infra = [name for name, verdict in judged if verdict == "infra"]
     upstream = BUILD in infra
     return [name for name, verdict in judged if verdict == "infra" or (upstream and verdict == "none")]

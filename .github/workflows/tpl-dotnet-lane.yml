@@ -92,7 +92,7 @@ jobs:
     name: route
     uses: ./.github/workflows/tpl-route.yml # zizmor: ignore[self-repository]
     with:
-      runner_label: ${{ inputs.runner_label }}
+      runner_label: ${{ inputs.retest != true && inputs.runner_label || '' }}
 
   run:
     name: run dotnet-${{ inputs.lane }}
