@@ -1,34 +1,70 @@
 name: sim-gate
 
-run-name: sim-gate ${{ inputs.base }} to ${{ inputs.head }}
+run-name: ${{ format('sim-gate {0} {1} from {2}{3}', inputs.stack, inputs.pr_branch, inputs.base, inputs.retest_of != '' && format(' retest of {0} (Retest)', inputs.retest_of) || '') }}
 
 on:
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: Pull request number, digits or empty
+        required: false
+        default: ""
+        type: string
+      pr_branch:
+        description: Branch of this repository that holds the change
+        required: false
+        default: main
+        type: string
+      pr_sha:
+        description: Full commit SHA on pr_branch; empty means the branch tip
+        required: false
+        default: ""
+        type: string
+      pr_author:
+        description: Login of the pull request author, or empty
+        required: false
+        default: ""
+        type: string
       base:
         description: Base for the affected selection, a branch or a commit on a branch of this repository
         required: false
         default: origin/main
         type: string
-      head:
-        description: Branch of this repository or a full commit SHA on one, both built and used for the affected selection
+      stack:
+        description: Which adapter runs
         required: false
-        default: main
+        default: dotnet
+        type: choice
+        options:
+          - dotnet
+      lanes:
+        description: Comma-separated lanes to run; empty runs every lane
+        required: false
+        default: ""
         type: string
-      fail_test:
-        description: Lab fault, add one failing test to the first test project of each lane
+      cache:
+        description: Use the build cache or build everything
         required: false
-        default: false
-        type: boolean
-      simulate_kill:
-        description: Lab fault, kill the runner mid test (none, onprem attempt only, or attempt and retry)
+        default: "use"
+        type: choice
+        options:
+          - "use"
+          - "off"
+      fault:
+        description: Lab fault to inject
         required: false
         default: none
         type: choice
         options:
           - none
-          - onprem
-          - both
+          - fail_test
+          - kill_onprem
+          - kill_both
+      retest_of:
+        description: Run id this run retests, or empty
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -39,9 +75,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      pr_sha: ${{ steps.resolve.outputs.pr_sha }}
       base_sha: ${{ steps.resolve.outputs.base_sha }}
       default_tip: ${{ steps.resolve.outputs.default_tip }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      pr_branch: ${{ steps.resolve.outputs.pr_branch }}
+      pr_author: ${{ steps.resolve.outputs.pr_author }}
+      retest_of: ${{ steps.resolve.outputs.retest_of }}
+      lane_unit: ${{ steps.resolve.outputs.lane_unit }}
+      lane_integration: ${{ steps.resolve.outputs.lane_integration }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,14 +93,21 @@ jobs:
       - name: Resolve refs
         id: resolve
         env:
+          PR_BRANCH: ${{ inputs.pr_branch }}
+          PR_SHA: ${{ inputs.pr_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_AUTHOR: ${{ inputs.pr_author }}
           BASE_REF: ${{ inputs.base }}
-          HEAD_REF: ${{ inputs.head }}
+          RETEST_OF: ${{ inputs.retest_of }}
+          LANES: ${{ inputs.lanes }}
+          KNOWN_LANES: unit integration
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: sh core/resolve_refs.sh
 
   unit:
     name: unit
     needs: validate
+    if: ${{ needs.validate.outputs.lane_unit == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -68,15 +117,17 @@ jobs:
     with:
       lane: unit
       base: ${{ needs.validate.outputs.base_sha }}
-      head: ${{ needs.validate.outputs.head_sha }}
+      head: ${{ needs.validate.outputs.pr_sha }}
       default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}
-      fail_test: ${{ inputs.fail_test }}
-      simulate_kill: ${{ inputs.simulate_kill }}
+      cache: ${{ inputs.cache }}
+      fail_test: ${{ inputs.fault == 'fail_test' }}
+      simulate_kill: ${{ inputs.fault == 'kill_onprem' && 'onprem' || inputs.fault == 'kill_both' && 'both' || 'none' }}
       lab_label: ${{ vars.SIM_LAB_LABEL_UNIT }}
 
   integration:
     name: integration
     needs: validate
+    if: ${{ needs.validate.outputs.lane_integration == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -86,15 +137,17 @@ jobs:
     with:
       lane: integration
       base: ${{ needs.validate.outputs.base_sha }}
-      head: ${{ needs.validate.outputs.head_sha }}
+      head: ${{ needs.validate.outputs.pr_sha }}
       default_tip: ${{ needs.validate.outputs.default_tip == 'true' }}
-      fail_test: ${{ inputs.fail_test }}
-      simulate_kill: ${{ inputs.simulate_kill }}
+      cache: ${{ inputs.cache }}
+      fail_test: ${{ inputs.fault == 'fail_test' }}
+      simulate_kill: ${{ inputs.fault == 'kill_onprem' && 'onprem' || inputs.fault == 'kill_both' && 'both' || 'none' }}
       lab_label: ${{ vars.SIM_LAB_LABEL_INTEGRATION }}
 
   gate:
     name: gate
     needs:
+      - validate
       - unit
       - integration
     if: ${{ always() }}
@@ -111,6 +164,8 @@ jobs:
           python-version: "3.12"
       - name: Decide
         env:
+          UNIT_SELECTED: ${{ needs.validate.outputs.lane_unit }}
+          INTEGRATION_SELECTED: ${{ needs.validate.outputs.lane_integration }}
           UNIT_ATTEMPT: ${{ needs.unit.outputs.attempt_verdict }}
           UNIT_RETRY: ${{ needs.unit.outputs.retry_verdict }}
           INTEGRATION_ATTEMPT: ${{ needs.integration.outputs.attempt_verdict }}
@@ -120,8 +175,16 @@ jobs:
           INTEGRATION_ATTEMPT_REASON: ${{ needs.integration.outputs.attempt_reason }}
           INTEGRATION_RETRY_REASON: ${{ needs.integration.outputs.retry_reason }}
         run: |
-          python3 -m core.gate \
-            --lane "unit=${UNIT_ATTEMPT},${UNIT_RETRY}" \
-            --lane "integration=${INTEGRATION_ATTEMPT},${INTEGRATION_RETRY}" \
-            --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" \
-            --reason "integration=${INTEGRATION_RETRY_REASON:-$INTEGRATION_ATTEMPT_REASON}"
+          set -eu
+          set --
+          case "$UNIT_SELECTED" in
+              true) set -- "$@" --lane "unit=${UNIT_ATTEMPT},${UNIT_RETRY}" --reason "unit=${UNIT_RETRY_REASON:-$UNIT_ATTEMPT_REASON}" ;;
+              false) echo "lane unit: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+          esac
+          case "$INTEGRATION_SELECTED" in
+              true) set -- "$@" --lane "integration=${INTEGRATION_ATTEMPT},${INTEGRATION_RETRY}" --reason "integration=${INTEGRATION_RETRY_REASON:-$INTEGRATION_ATTEMPT_REASON}" ;;
+              false) echo "lane integration: not selected" >> "$GITHUB_STEP_SUMMARY" ;;
+              *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;
+          esac
+          python3 -m core.gate "$@"

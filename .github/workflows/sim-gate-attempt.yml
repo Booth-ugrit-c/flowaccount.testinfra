@@ -28,6 +28,11 @@ on:
         description: True when the runner is a fresh GitHub-hosted VM
         required: true
         type: boolean
+      cache:
+        description: use or off
+        required: false
+        default: "use"
+        type: string
       fail_test:
         required: false
         default: false
@@ -68,9 +73,28 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Checkout trusted
+        if: ${{ runner.environment == 'self-hosted' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .sim-trusted
+          persist-credentials: false
+          sparse-checkout: core
       - name: Hygiene
         if: ${{ runner.environment == 'self-hosted' }}
-        run: sh core/prejob.sh
+        env:
+          SIM_SURVIVORS: dotnet testhost vstest.console VBCSCompiler
+        run: |
+          set -u
+          status=0
+          if [ -L .sim-trusted ] || [ ! -d .sim-trusted/.git ] || [ "$(git -C .sim-trusted rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+              echo "::error::the trusted checkout is not the dispatch commit"
+              status=1
+          else
+              sh .sim-trusted/core/prejob.sh || status=$?
+          fi
+          rm -rf .sim-trusted
+          exit "$status"
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -140,6 +164,7 @@ jobs:
         id: join
         if: ${{ runner.environment == 'github-hosted' }}
         continue-on-error: true
+        timeout-minutes: 3
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
           oauth-client-id: ${{ secrets.SIM_TAILNET_CLIENT_ID }}
@@ -158,6 +183,7 @@ jobs:
       - name: Build
         env:
           FAIL_TEST: ${{ inputs.fail_test && '1' || '0' }}
+          SIM_CACHE_MODE: ${{ inputs.cache }}
           SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}
           SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
           SIM_CACHE_READ_KEY_ID: ${{ secrets.SIM_CACHE_READ_KEY_ID }}
@@ -210,6 +236,7 @@ jobs:
         if: ${{ inputs.default_tip && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.fail_test == false && runner.environment == 'github-hosted' }}
         env:
           SIM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SIM_CACHE_MODE: ${{ inputs.cache }}
           SIM_CACHE_ENDPOINT_LAB: ${{ secrets.SIM_CACHE_ENDPOINT_LAB }}
           SIM_CACHE_ENDPOINT_TAILNET: ${{ secrets.SIM_CACHE_ENDPOINT_TAILNET }}
           SIM_CACHE_WRITE_KEY_ID: ${{ secrets.SIM_CACHE_WRITE_KEY_ID }}
@@ -262,7 +289,7 @@ jobs:
           RUN_RESULT: ${{ needs.run.result }}
         run: |
           set -eu
-          verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt")
+          verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt" --infra-step "Set up .NET")
           case "$verdict" in
               pass | test | infra) ;;
               *) verdict="test" ;;

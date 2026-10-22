@@ -264,10 +264,8 @@ def walk(node, path=()):
 
 
 def load(directory):
-    return {
-        p.name: parse(p.read_text(encoding="utf-8"))
-        for p in sorted(Path(directory).glob("sim-gate*.yml"))
-    }
+    paths = [*Path(directory).glob("sim-gate*.yml"), *Path(directory).glob("sim-retest.yml"), *Path(directory).glob("tpl-*.yml")]
+    return {p.name: parse(p.read_text(encoding="utf-8")) for p in sorted(paths)}
 
 
 def triggers(doc):
@@ -298,6 +296,44 @@ READ_ENVIRONMENT = "sim-cache-read"
 LAB_ENVIRONMENT = "sim-cache-lab"
 JOIN_STEP = "Join the tailnet"
 FULL_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+SAVE_RUN = f'sh {CACHE_BUILD} save "$RUNNER_TEMP/built.txt"'
+TRIPWIRE_RUN = f'sh {CACHE_BUILD} tripwire "$MARKERS"'
+BUILD_RUN = r"""set -eu
+if [ "$FAIL_TEST" = 1 ]; then
+    SIM_CACHE_MODE=off
+    export SIM_CACHE_MODE
+    project=$(head -n 1 "$RUNNER_TEMP/test.txt")
+    if [ -n "$project" ]; then
+        printf '%s\n' 'using Xunit;' 'public class ForcedFailure' '{' '    [Fact]' \
+            '    public void Asserts_the_wrong_value() => Assert.Equal(2, 1);' '}' > "$(dirname "$GITHUB_WORKSPACE/$project")/ForcedFailure.cs"
+    fi
+fi
+sh adapters/dotnet/cache_build.sh build "$RUNNER_TEMP/build.txt" "$RUNNER_TEMP/built.txt"
+touch "$MARKERS/build"
+"""
+CLASSIFY_RUN = r"""set -eu
+verdict=$(python3 -m core.classify --job-dir "$RUNNER_TEMP/job" --fetch-job "$JOB_SUFFIX" --fetch-artifact "$ARTIFACT_NAME" --run-result "$RUN_RESULT" --reason-file "$RUNNER_TEMP/reason.txt" --infra-step "Set up .NET")
+case "$verdict" in
+    pass | test | infra) ;;
+    *) verdict="test" ;;
+esac
+reason=
+[ ! -f "$RUNNER_TEMP/reason.txt" ] || reason=$(cat "$RUNNER_TEMP/reason.txt")
+case "$reason" in
+    *[!A-Za-z0-9\ _-]*) reason= ;;
+esac
+echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+"""
+CLASSIFY_ENV = {
+    "GITHUB_TOKEN": "${{ github.token }}",
+    "JOB_SUFFIX": "run ${{ inputs.tag }}",
+    "ARTIFACT_NAME": "markers-${{ inputs.tag }}",
+    "RUN_RESULT": "${{ needs.run.result }}",
+}
+MAX_JOIN_MINUTES = 5
 
 
 def in_attempt_run_step(name, path, section):
@@ -442,12 +478,12 @@ def cache_wiring_violations(docs):
                 found.append("the cache save step never runs on the default branch with fail_test off")
             if step.get("env", {}).get("SIM_DEFAULT_BRANCH") != "${{ github.event.repository.default_branch }}":
                 found.append("the save step must pass the default branch name from github.event.repository.default_branch")
-            if f"sh {CACHE_BUILD} save" not in str(step.get("run", "")):
-                found.append(f"the step holding the cache writer key must only run sh {CACHE_BUILD} save")
+            if step.get("run") != SAVE_RUN:
+                found.append(f"the step holding the cache writer key must run exactly {SAVE_RUN}")
     if "Cache tripwire" not in names or "Build" not in names or names.index("Cache tripwire") > names.index("Build"):
         found.append("the cache tripwire step must come before the Build step")
-    elif f"sh {CACHE_BUILD} tripwire" not in str(steps[names.index("Cache tripwire")].get("run", "")):
-        found.append(f"the cache tripwire step must run sh {CACHE_BUILD} tripwire")
+    elif steps[names.index("Cache tripwire")].get("run") != TRIPWIRE_RUN:
+        found.append(f"the cache tripwire step must run exactly {TRIPWIRE_RUN}")
     for early in ("Health", "Services", "Affected", "Plan"):
         if early in names and "Cache tripwire" in names and names.index(early) > names.index("Cache tripwire"):
             found.append(f"the cache tripwire step must come after {early}")
@@ -461,12 +497,15 @@ def cache_wiring_violations(docs):
             found.append("the tailnet join must be continue-on-error: true; a failed join costs a cold build, never a red lane")
         if join.get("id") != "join":
             found.append("the tailnet join step must have id: join")
+        limit = str(join.get("timeout-minutes", ""))
+        if not limit.isdigit() or not 0 < int(limit) <= MAX_JOIN_MINUTES:
+            found.append(f"the tailnet join step needs timeout-minutes of {MAX_JOIN_MINUTES} or less; a hanging join eats the attempt budget")
     if "Cache tripwire" in names and steps[names.index("Cache tripwire")].get("env", {}).get("SIM_TAILNET_JOIN") != "${{ steps.join.outcome }}":
         found.append("the cache tripwire step must pass SIM_TAILNET_JOIN: ${{ steps.join.outcome }}")
     found += full_plan_violations(steps, names)
     build = steps[names.index("Build")] if "Build" in names else {}
-    if f"sh {CACHE_BUILD} build" not in str(build.get("run", "")):
-        found.append(f"the Build step must go through sh {CACHE_BUILD} build")
+    if build.get("run") != BUILD_RUN:
+        found.append(f"the Build step must run exactly the pinned script that goes through sh {CACHE_BUILD} build")
     for name, doc in docs.items():
         for job_id, job in doc["jobs"].items():
             for step in job.get("steps", []):
@@ -497,8 +536,128 @@ def full_plan_violations(steps, names):
     return found
 
 
+ENTRY = "sim-gate.yml"
+LANE_WORKFLOW = "./.github/workflows/sim-gate-lane.yml"
+ENTRY_INPUTS = {
+    "pr_number": {"type": "string", "default": ""},
+    "pr_branch": {"type": "string", "default": "main"},
+    "pr_sha": {"type": "string", "default": ""},
+    "pr_author": {"type": "string", "default": ""},
+    "base": {"type": "string", "default": "origin/main"},
+    "stack": {"type": "choice", "default": "dotnet", "options": ["dotnet"]},
+    "lanes": {"type": "string", "default": ""},
+    "cache": {"type": "choice", "default": "use", "options": ["use", "off"]},
+    "fault": {"type": "choice", "default": "none"},
+    "retest_of": {"type": "string", "default": ""},
+}
+FAULTS = {"none": (False, "none"), "fail_test": (True, "none"), "kill_onprem": (False, "onprem"), "kill_both": (False, "both")}
+UNRESOLVED_INPUTS = re.compile(r"\binputs\.(head|base|pr_branch|pr_sha|pr_number|pr_author|lanes|retest_of)\b")
+RESOLVED = ("pr_sha", "base_sha", "default_tip", "pr_number", "pr_branch", "pr_author", "retest_of")
+
+
+def lane_jobs_of(docs):
+    jobs = docs[ENTRY]["jobs"]
+    return [job_id for job_id, job in jobs.items() if str(job.get("uses", "")).split(" ")[0] == LANE_WORKFLOW]
+
+
+def known_lanes(docs):
+    resolve = next((st for st in docs[ENTRY]["jobs"]["validate"].get("steps", []) if st.get("id") == "resolve"), {})
+    return str(resolve.get("env", {}).get("KNOWN_LANES", "")).split()
+
+
+def entry_contract_violations(docs):
+    found = []
+    inputs = docs[ENTRY].get("on", {}).get("workflow_dispatch", {}).get("inputs", {})
+    if set(inputs) != set(ENTRY_INPUTS):
+        return [f"{ENTRY}: dispatch inputs are {sorted(inputs)}, the entry contract is {sorted(ENTRY_INPUTS)}"]
+    for name, wanted in ENTRY_INPUTS.items():
+        given = inputs[name]
+        if str(given.get("required")) != "false":
+            found.append(f"{ENTRY}: input {name} must be required: false")
+        for key, value in wanted.items():
+            if given.get(key) != value:
+                found.append(f"{ENTRY}: input {name} has {key} {given.get(key)!r}, the entry contract says {value!r}")
+    options = inputs["fault"].get("options", [])
+    if options[:1] != ["none"] or set(options) != set(FAULTS) or len(options) != len(set(options)):
+        found.append(f"{ENTRY}: fault options are {options}, wanted none first and exactly {sorted(FAULTS)}")
+    jobs_text = str(docs[ENTRY]["jobs"])
+    for option in options:
+        if option != "none" and f"'{option}'" not in jobs_text:
+            found.append(f"{ENTRY}: fault option {option} is not referenced by any job")
+    for job_id in lane_jobs_of(docs):
+        given = docs[ENTRY]["jobs"][job_id].get("with", {})
+        for option, (fail_test, kill) in FAULTS.items():
+            context = {"inputs.fault": option}
+            got = (truthy(evaluate(condition(str(given.get("fail_test", ""))), context)), evaluate(str(given.get("simulate_kill", "")), context))
+            if got != (fail_test, kill):
+                found.append(f"{ENTRY}: lane {job_id} maps fault {option} to {got}, wanted {(fail_test, kill)}")
+        if given.get("cache") != "${{ inputs.cache }}":
+            found.append(f"{ENTRY}: lane {job_id} must pass cache: ${{{{ inputs.cache }}}}")
+    return found
+
+
+def run_name_violations(docs):
+    found = []
+    text = str(docs[ENTRY].get("run-name", ""))
+    base = {"inputs.stack": "dotnet", "inputs.pr_branch": "topic", "inputs.base": "origin/main"}
+    for retest in (None, "", "1", "42"):
+        context = dict(base, **({} if retest is None else {"inputs.retest_of": retest}))
+        title = str(evaluate(text, context))
+        if retest:
+            if not title.endswith("(Retest)") or f"retest of {retest}" not in title:
+                found.append(f"{ENTRY}: run-name {title!r} for retest_of {retest} must contain 'retest of {retest}' and end with (Retest)")
+        elif "(Retest)" in title or "retest of" in title:
+            found.append(f"{ENTRY}: run-name {title!r} without retest_of must not say retest")
+    return found
+
+
+def decide_run(lanes):
+    lines = ["set -eu", "set --"]
+    for lane in lanes:
+        upper = lane.upper()
+        lines += [
+            f'case "${upper}_SELECTED" in',
+            f'    true) set -- "$@" --lane "{lane}=${{{upper}_ATTEMPT}},${{{upper}_RETRY}}" --reason "{lane}=${{{upper}_RETRY_REASON:-${upper}_ATTEMPT_REASON}}" ;;',
+            f'    false) echo "lane {lane}: not selected" >> "$GITHUB_STEP_SUMMARY" ;;',
+            '    *) echo "gate: red [test]: validate did not select lanes"; exit 1 ;;',
+            "esac",
+        ]
+    lines.append('python3 -m core.gate "$@"')
+    return "\n".join(lines) + "\n"
+
+
+def lane_set_violations(docs):
+    jobs = docs[ENTRY]["jobs"]
+    lanes = lane_jobs_of(docs)
+    found = []
+    outputs = sorted(key[len("lane_"):] for key in jobs["validate"].get("outputs", {}) if key.startswith("lane_"))
+    gate = jobs.get("gate", {})
+    decide = next((st for st in gate.get("steps", []) if st.get("name") == "Decide"), {})
+    selected = sorted(key[: -len("_SELECTED")].lower() for key in decide.get("env", {}) if key.endswith("_SELECTED"))
+    sets = {"lane jobs": sorted(lanes), "KNOWN_LANES": sorted(known_lanes(docs)), "validate lane_ outputs": outputs, "Decide _SELECTED env": selected}
+    if len({tuple(v) for v in sets.values()}) != 1 or not lanes:
+        found.append(f"{ENTRY}: the lane names differ between {sets}")
+    for lane in lanes:
+        job = jobs[lane]
+        if job.get("with", {}).get("lane") != lane:
+            found.append(f"{ENTRY}: job {lane} must pass lane: {lane}")
+        guard = condition(str(job.get("if", "true")))
+        key = f"needs.validate.outputs.lane_{lane}"
+        if not truthy(evaluate(guard, {key: "true"})) or any(truthy(evaluate(guard, {key: v})) for v in ("false", "", None, "yes")):
+            found.append(f"{ENTRY}: job {lane} must run exactly when validate selects it")
+        if decide.get("env", {}).get(f"{lane.upper()}_SELECTED") != f"${{{{ needs.validate.outputs.lane_{lane} }}}}":
+            found.append(f"{ENTRY}: Decide must read {lane.upper()}_SELECTED from validate")
+    needs = gate.get("needs", [])
+    needs = [needs] if isinstance(needs, str) else needs
+    if sorted(needs) != sorted(["validate", *lanes]):
+        found.append(f"{ENTRY}: the gate must need validate and every lane, has {needs}")
+    if decide.get("run") != decide_run(sorted(lanes, key=list(jobs).index)):
+        found.append(f"{ENTRY}: the Decide step must run exactly the pinned gate invocation for the selected lanes")
+    return found
+
+
 def validate_violations(docs):
-    jobs = docs["sim-gate.yml"]["jobs"]
+    jobs = docs[ENTRY]["jobs"]
     validate = jobs["validate"]
     found = []
     steps = validate.get("steps", [])
@@ -508,24 +667,31 @@ def validate_violations(docs):
     if not checkouts or "ref" in options or str(options.get("fetch-depth")) != "0" or str(options.get("persist-credentials")) != "false":
         found.append("validate must check out the dispatch commit itself with fetch-depth: 0 and persist-credentials: false")
     wanted_env = {
-        "HEAD_REF": "${{ inputs.head }}",
+        "PR_BRANCH": "${{ inputs.pr_branch }}",
+        "PR_SHA": "${{ inputs.pr_sha }}",
+        "PR_NUMBER": "${{ inputs.pr_number }}",
+        "PR_AUTHOR": "${{ inputs.pr_author }}",
         "BASE_REF": "${{ inputs.base }}",
+        "RETEST_OF": "${{ inputs.retest_of }}",
+        "LANES": "${{ inputs.lanes }}",
+        "KNOWN_LANES": " ".join(known_lanes(docs)),
         "DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
     }
     resolve = steps[resolves[0]] if resolves else {}
     if str(resolve.get("run", "")).strip() != "sh core/resolve_refs.sh" or resolve.get("env") != wanted_env:
-        found.append("validate must resolve head and base with sh core/resolve_refs.sh")
+        found.append("validate must resolve every PR input with sh core/resolve_refs.sh")
     elif not checkouts or resolves[0] < checkouts[0]:
         found.append("validate must check out before it resolves")
-    outputs = {name: f"${{{{ steps.resolve.outputs.{name} }}}}" for name in ("head_sha", "base_sha", "default_tip")}
+    names = [*RESOLVED, *(f"lane_{lane}" for lane in known_lanes(docs))]
+    outputs = {name: f"${{{{ steps.resolve.outputs.{name} }}}}" for name in names}
     if validate.get("outputs") != outputs:
-        found.append("validate must output head_sha, base_sha and default_tip from the resolve step")
+        found.append(f"validate must output {', '.join(names)} from the resolve step")
     wanted_with = {
-        "head": "${{ needs.validate.outputs.head_sha }}",
+        "head": "${{ needs.validate.outputs.pr_sha }}",
         "base": "${{ needs.validate.outputs.base_sha }}",
         "default_tip": "${{ needs.validate.outputs.default_tip == 'true' }}",
     }
-    for lane in ("unit", "integration"):
+    for lane in lane_jobs_of(docs):
         given = {key: jobs[lane].get("with", {}).get(key) for key in wanted_with}
         if given != wanted_with:
             found.append(f"lane {lane} must take head, base and default_tip from validate only, has {given}")
@@ -533,31 +699,69 @@ def validate_violations(docs):
         if job_id == "validate":
             continue
         for path, value in walk(job):
-            if re.search(r"\binputs\.(head|base)\b", str(value)):
-                found.append(f"sim-gate.yml: job {job_id} reads the unresolved ref at {'.'.join(map(str, path))}; use needs.validate.outputs")
+            if UNRESOLVED_INPUTS.search(str(value)):
+                found.append(f"{ENTRY}: job {job_id} reads an unresolved PR input at {'.'.join(map(str, path))}; use needs.validate.outputs")
     lane_jobs = docs["sim-gate-lane.yml"]["jobs"]
     for caller in ("attempt", "retry"):
         given = lane_jobs[caller].get("with", {})
         if given.get("head") != "${{ inputs.head }}" or given.get("default_tip") != "${{ inputs.default_tip }}":
             found.append(f"the lane {caller} must pass head and default_tip through unchanged")
-    return found
+        if given.get("cache") != "${{ inputs.cache }}":
+            found.append(f"the lane {caller} must pass cache through unchanged")
+    return found + entry_contract_violations(docs) + run_name_violations(docs) + lane_set_violations(docs)
+
+
+TRUSTED_CHECKOUT = "Checkout trusted"
+TRUSTED_OPTIONS = {"path": ".sim-trusted", "persist-credentials": "false", "sparse-checkout": "core"}
+DOTNET_SURVIVORS = "dotnet testhost vstest.console VBCSCompiler"
+HYGIENE_RUN = """set -u
+status=0
+if [ -L .sim-trusted ] || [ ! -d .sim-trusted/.git ] || [ "$(git -C .sim-trusted rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+    echo "::error::the trusted checkout is not the dispatch commit"
+    status=1
+else
+    sh .sim-trusted/core/prejob.sh || status=$?
+fi
+rm -rf .sim-trusted
+exit "$status"
+"""
+
+
+def self_hosted_only(step):
+    guard = condition(str(step["if"])) if "if" in step else "${{ true }}"
+    return truthy(evaluate(guard, {"runner.environment": "self-hosted"})) and not truthy(evaluate(guard, {"runner.environment": "github-hosted"}))
 
 
 def hygiene_violations(docs):
-    steps = docs["sim-gate-attempt.yml"]["jobs"]["run"]["steps"]
-    hygiene = next((i for i, st in enumerate(steps) if st.get("name") == "Hygiene"), None)
-    if hygiene is None:
+    steps = docs[ATTEMPT]["jobs"]["run"]["steps"]
+    names = [st.get("name") for st in steps]
+    if "Hygiene" not in names:
         return ["the attempt run job has no Hygiene step"]
     found = []
+    hygiene = names.index("Hygiene")
     step = steps[hygiene]
-    if step.get("run", "").strip() != "sh core/prejob.sh":
-        found.append("the Hygiene step must run sh core/prejob.sh")
-    guard = condition(str(step["if"])) if "if" in step else "${{ true }}"
-    if not truthy(evaluate(guard, {"runner.environment": "self-hosted"})) or truthy(evaluate(guard, {"runner.environment": "github-hosted"})):
+    if step.get("run") != HYGIENE_RUN:
+        found.append("the Hygiene step must run the trusted copy exactly: sh .sim-trusted/core/prejob.sh, then remove it")
+    if step.get("env") != {"SIM_SURVIVORS": DOTNET_SURVIVORS}:
+        found.append(f"the Hygiene step must pass exactly SIM_SURVIVORS: {DOTNET_SURVIVORS}")
+    if not self_hosted_only(step):
         found.append("the Hygiene step must run on self-hosted runners only")
     first_work = min(i for i, st in enumerate(steps) if st.get("name") in ("Set up .NET", "Health", "Services", "Affected", "Build", "Test"))
     if hygiene > first_work:
         found.append("the Hygiene step must come before the first dotnet or service step")
+    if TRUSTED_CHECKOUT not in names:
+        return found + [f"the attempt run job has no {TRUSTED_CHECKOUT} step"]
+    trusted = steps[names.index(TRUSTED_CHECKOUT)]
+    options = trusted.get("with", {})
+    if "ref" in options:
+        found.append("the trusted checkout must not take a ref; it is the dispatch commit")
+    if not str(trusted.get("uses", "")).startswith("actions/checkout@") or options != TRUSTED_OPTIONS:
+        found.append(f"the trusted checkout must be actions/checkout with exactly {TRUSTED_OPTIONS}")
+    if not self_hosted_only(trusted):
+        found.append("the trusted checkout must run on self-hosted runners only")
+    head = names.index("Checkout") if "Checkout" in names else len(steps)
+    if not head < names.index(TRUSTED_CHECKOUT) < hygiene:
+        found.append("the trusted checkout must come after the head checkout and before Hygiene")
     return found
 
 
@@ -585,17 +789,148 @@ def checkout_violations(docs):
     return found
 
 
-def violations(directory):
+RETEST = "sim-retest.yml"
+SIM_WORKFLOWS = {"sim-gate.yml", "sim-gate-lane.yml", "sim-gate-attempt.yml", RETEST}
+OTHER_WORKFLOWS = {"ci.yml", "leak-guard.yml", "leak-guard-scheduled.yml", "trial-gate.yml"}
+DISPATCH_ONLY = {"sim-gate.yml", RETEST}
+LANE_CALLER = {"contents": "read", "actions": "read", "checks": "read", "id-token": "write"}
+PERMISSION_MAP = {
+    ("sim-gate.yml", "unit"): LANE_CALLER,
+    ("sim-gate.yml", "integration"): LANE_CALLER,
+    ("sim-gate-lane.yml", "attempt"): LANE_CALLER,
+    ("sim-gate-lane.yml", "retry"): LANE_CALLER,
+    (ATTEMPT, "run"): {"contents": "read", "id-token": "write"},
+    (ATTEMPT, "classify"): {"contents": "read", "actions": "read", "checks": "read"},
+}
+ENVIRONMENT_PLACES = {("sim-gate-lane.yml", "route"), (ATTEMPT, "run")}
+WRITER_TEXT = re.compile(r"sim[-_]cache[-_]write", re.I)
+YAML_ESCAPE = re.compile(r"\\[xuUN]")
+SECRETS_WHOLE = re.compile(r"toJSON\s*\(\s*secrets\s*\)|\bsecrets\s*\[", re.I)
+THIRD_PARTY_MODULES = {"pytest", "pip"}
+EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "adapters.dotnet.affected", "adapters.dotnet.plan"}
+EXPECTED_SCRIPTS = {"core/resolve_refs.sh", "core/prejob.sh", "core/kill_own_runner.sh", "adapters/dotnet/cache_build.sh"}
+PYTHON_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
+PYTHON_FILE = re.compile(r"\bpython3?\s+([^\s\-][^\s;|&)]*\.py)\b")
+SHELL_SCRIPT = re.compile(r"""(?:^|[\s;&|(])(?:sh|bash)\s+(?:-[A-Za-z]+\s+)*["']?([^\s"';|&)]+\.sh)\b""")
+DIRECT_SCRIPT = re.compile(r"""(?:^|[\s;&|(])["']?(\./[^\s"';|&)]+\.sh)\b""")
+SCRIPT_PREFIXES = ("$GITHUB_WORKSPACE/", "${GITHUB_WORKSPACE}/", ".sim-trusted/", "./")
+
+
+def permission_violations(docs):
+    found = []
+    for name, doc in docs.items():
+        for job_id, job in doc.get("jobs", {}).items():
+            wanted = PERMISSION_MAP.get((name, job_id))
+            if job.get("permissions") != wanted:
+                found.append(f"{name}: job {job_id} permissions are {job.get('permissions')}, the permission map says {wanted or 'inherit contents: read'}")
+    for name, job_id in sorted(PERMISSION_MAP):
+        if job_id not in docs.get(name, {}).get("jobs", {}):
+            found.append(f"{name}: the permission map names job {job_id}, which does not exist")
+    return found
+
+
+def workflow_files(directory):
+    return sorted(p for p in Path(directory).iterdir() if p.suffix in (".yml", ".yaml"))
+
+
+def all_files_violations(directory):
+    found = []
+    files = workflow_files(directory)
+    names = {p.name for p in files}
+    if names != SIM_WORKFLOWS | OTHER_WORKFLOWS:
+        found.append(f"workflow directory holds {sorted(names)}, expected {sorted(SIM_WORKFLOWS | OTHER_WORKFLOWS)}; a new workflow needs a policy entry")
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        if YAML_ESCAPE.search(text):
+            found.append(f"{path.name}: YAML escape sequences are refused; they hide names from this policy")
+        if SECRETS_WHOLE.search(text):
+            found.append(f"{path.name}: the secrets context may only be read by name")
+        if path.name not in SIM_WORKFLOWS and WRITER_TEXT.search(text):
+            found.append(f"{path.name}: names the cache writer key or environment; only the attempt save step may")
+        try:
+            doc = parse(text)
+        except Unsupported as exc:
+            found.append(f"{path.name}: the policy cannot read this workflow: {exc}")
+            continue
+        for where, value in walk(doc):
+            dotted = ".".join(map(str, where))
+            if where[-1:] == ("secrets",) and value == "inherit":
+                found.append(f"{path.name}: secrets: inherit at {dotted}")
+            if where[-1:] == ("run",) and "${{" in str(value):
+                found.append(f"{path.name}: expression inside run at {dotted}")
+            if "environment" in where and (where[:1] != ("jobs",) or (path.name, where[1]) not in ENVIRONMENT_PLACES):
+                found.append(f"{path.name}: environment at {dotted} is not in the environment allowlist")
+            for item in (str(value), *map(str, where)):
+                if WRITER_TEXT.search(item) and not writer_place_allowed(path.name, where, doc):
+                    found.append(f"{path.name}: the cache writer key or environment is named at {dotted}")
+                    break
+    return found
+
+
+def writer_place_allowed(name, where, doc):
+    if name != ATTEMPT or where[:2] != ("jobs", "run"):
+        return False
+    if where[2:] == ("environment",):
+        return True
+    if len(where) == 6 and where[2] == "steps" and where[4] == "env" and str(where[5]).startswith(WRITER_PREFIX):
+        return doc["jobs"]["run"]["steps"][where[3]].get("run") == SAVE_RUN
+    return False
+
+
+def resolves_module(root, module):
+    base = Path(root, *module.split("."))
+    return base.with_suffix(".py").is_file() or (base / "__main__.py").is_file()
+
+
+def script_path(raw):
+    for prefix in SCRIPT_PREFIXES:
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+    return raw
+
+
+def invocation_violations(directory, root):
+    found, modules, scripts = [], set(), set()
+    for path in workflow_files(directory):
+        for where, value in walk(parse(path.read_text(encoding="utf-8"))):
+            text = str(value)
+            if where[-1:] == ("uses",) and text.startswith("./"):
+                local = text.split(" ")[0]
+                if not Path(root, local).is_file():
+                    found.append(f"{path.name}: uses {local}, which does not exist")
+            if where[-1:] != ("run",):
+                continue
+            text = re.sub(r"\\\n\s*", " ", text)
+            for module in PYTHON_MODULE.findall(text):
+                modules.add(module)
+                if module not in THIRD_PARTY_MODULES and not resolves_module(root, module):
+                    found.append(f"{path.name}: python -m {module} does not resolve to a module in this tree")
+            for raw in PYTHON_FILE.findall(text) + SHELL_SCRIPT.findall(text) + DIRECT_SCRIPT.findall(text):
+                script = script_path(raw)
+                scripts.add(script)
+                if "$" in script or not Path(root, script).is_file():
+                    found.append(f"{path.name}: {raw} does not resolve to a file in this tree")
+    for missing in sorted(EXPECTED_MODULES - modules):
+        found.append(f"no workflow runs python -m {missing}; the invocation scan lost it")
+    for missing in sorted(EXPECTED_SCRIPTS - scripts):
+        found.append(f"no workflow runs {missing}; the invocation scan lost it")
+    return found
+
+
+def violations(directory, root=None):
     docs = load(directory)
     found = []
-    expected = {"sim-gate.yml", "sim-gate-lane.yml", "sim-gate-attempt.yml"}
-    if set(docs) != expected:
-        return [f"workflow set is {sorted(docs)}, expected {sorted(expected)}"]
+    if set(docs) != SIM_WORKFLOWS:
+        return [f"workflow set is {sorted(docs)}, expected {sorted(SIM_WORKFLOWS)}"]
+    found += all_files_violations(directory)
+    if root is not None:
+        found += invocation_violations(directory, root)
+    found += permission_violations(docs)
 
     for name, doc in docs.items():
         for trigger in sorted(triggers(doc) & FORBIDDEN_TRIGGERS):
             found.append(f"{name}: forbidden trigger {trigger}")
-        if name == "sim-gate.yml" and triggers(doc) != {"workflow_dispatch"}:
+        if name in DISPATCH_ONLY and triggers(doc) != {"workflow_dispatch"}:
             found.append(f"{name}: must be workflow_dispatch only, has {sorted(triggers(doc))}")
         if doc.get("permissions") != {"contents": "read"}:
             found.append(f"{name}: workflow permissions must be contents: read only")
@@ -729,11 +1064,8 @@ def violations(directory):
             elif steps[setup].get("with", {}).get("global-json-file") != DOTNET_GLOBAL_JSON:
                 found.append(f"{name}: job {job_id} setup-dotnet must use global-json-file {DOTNET_GLOBAL_JSON}")
     classify_step = next(st for st in attempt["classify"]["steps"] if st.get("id") == "verdict")
-    classify_run = classify_step["run"]
-    if "--reason-file" not in classify_run:
-        found.append("classify step does not capture the infra reason")
-    if classify_step.get("env", {}).get("RUN_RESULT") != "${{ needs.run.result }}" or '--run-result "$RUN_RESULT"' not in classify_run:
-        found.append("classify step does not take the run job result from needs.run.result")
+    if classify_step.get("run") != CLASSIFY_RUN or classify_step.get("env") != CLASSIFY_ENV:
+        found.append("the Classify step must run exactly the pinned classify invocation with exactly its pinned env")
     gate_run = next(st["run"] for st in docs["sim-gate.yml"]["jobs"]["gate"]["steps"] if st["name"] == "Decide")
     for lane in ("unit", "integration"):
         if f'--reason "{lane}=' not in gate_run:
