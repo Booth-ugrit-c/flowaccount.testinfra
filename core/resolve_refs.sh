@@ -55,6 +55,9 @@ for lane in $(printf '%s\n' "$lanes" | tr ',' ' '); do
         *) refuse "lanes names a lane this stack does not have" ;;
     esac
 done
+if [ -n "$lanes" ] && [ -z "$retest_of" ]; then
+    refuse "lanes may narrow a retest only; a first run tests every lane"
+fi
 
 if printf '%s\n' "$head_ref" | grep -Eqx '[0-9a-f]{40}'; then
     head_sha=$(git rev-parse --verify --quiet "$head_ref^{commit}") || refuse "head commit is not in this repository"
@@ -68,8 +71,14 @@ if [ -n "$pr_sha" ] && [ -n "$pr_branch" ]; then
     branch_tip=$(git rev-parse --verify --quiet "refs/remotes/origin/$pr_branch^{commit}") || refuse "pr_branch is not a branch of this repository"
     git merge-base --is-ancestor "$head_sha" "$branch_tip" || refuse "pr_sha is not on pr_branch"
 fi
+if [ -n "$pr_branch" ] && [ "${GITHUB_REF:-}" = "refs/heads/$pr_branch" ] && [ "$head_sha" != "${GITHUB_SHA:-}" ]; then
+    refuse "the tested commit is not the dispatched commit; the gate check would land on a commit this run did not test"
+fi
 
 tip=$(git rev-parse --verify --quiet "refs/remotes/origin/$default^{commit}" || true)
+if [ -z "$tip" ] || ! git merge-base --is-ancestor "$base_sha" "$tip"; then
+    refuse "base must be a commit on the default branch"
+fi
 default_tip=false
 if [ -n "$tip" ] && [ "$head_sha" = "$tip" ] && [ "${GITHUB_REF:-}" = "refs/heads/$default" ]; then
     default_tip=true

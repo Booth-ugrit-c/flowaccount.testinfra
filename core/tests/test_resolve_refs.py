@@ -56,6 +56,9 @@ def resolve(repo, tmp_path, request):
         output.write_text("")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GITHUB_", "PR_", "BASE_REF", "DEFAULT_BRANCH", "RETEST_OF", "LANES", "KNOWN_LANES"))}
         env.update(PR_BRANCH=head, BASE_REF=base, DEFAULT_BRANCH=default, GITHUB_REF=ref, GITHUB_OUTPUT=output.as_posix(), KNOWN_LANES="unit integration")
+        dispatched = ref.removeprefix("refs/heads/")
+        if ref.startswith("refs/heads/") and dispatched in repo:
+            env.update(GITHUB_SHA=repo[dispatched])
         env.update(inputs)
         proc = subprocess.run(
             [request.param, SCRIPT.as_posix()], cwd=repo["dir"], env=env, capture_output=True, text=True, timeout=60
@@ -81,10 +84,43 @@ def test_the_four_pr_inputs_are_carried_into_the_outputs(repo, resolve):
     assert (out["pr_sha"], out["pr_branch"], out["pr_number"], out["pr_author"], out["retest_of"]) == (repo["topic"], "topic", "17", "dependabot[bot]", "39789348836")
 
 
-def test_pr_sha_wins_over_the_branch_tip(repo, resolve):
-    proc, out = resolve("main", PR_SHA=repo["first"])
+def test_pr_sha_wins_over_the_branch_tip_when_dispatched_from_another_ref(repo, resolve):
+    proc, out = resolve("main", ref="refs/heads/topic", PR_SHA=repo["first"])
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["pr_sha"] == repo["first"] and out["default_tip"] == "false"
+
+
+BINDING = "the tested commit is not the dispatched commit"
+
+
+def test_an_older_pr_sha_dispatched_on_the_pr_branch_is_refused(repo, resolve):
+    proc, out = resolve("main", PR_SHA=repo["first"])
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+def test_an_older_pr_sha_on_a_feature_branch_dispatched_there_is_refused(repo, resolve):
+    proc, out = resolve("topic", ref="refs/heads/topic", PR_SHA=repo["first"])
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+def test_the_dispatched_commit_as_pr_sha_on_the_pr_branch_is_accepted(repo, resolve):
+    proc, out = resolve("topic", ref="refs/heads/topic", PR_SHA=repo["topic"])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert out["pr_sha"] == repo["topic"]
+
+
+def test_a_branch_tip_that_moved_past_the_dispatched_commit_is_refused(repo, resolve):
+    proc, out = resolve("topic", ref="refs/heads/topic", GITHUB_SHA=repo["first"])
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
+
+
+def test_a_dispatch_without_the_dispatched_commit_is_refused_on_the_pr_branch(repo, resolve):
+    proc, out = resolve("topic", ref="refs/heads/topic", GITHUB_SHA="")
+    assert proc.returncode != 0 and out == {}
+    assert BINDING in proc.stdout
 
 
 def test_pr_sha_alone_resolves_when_it_is_on_a_branch(repo, resolve):
@@ -163,14 +199,21 @@ def test_retest_of_must_be_a_run_id(resolve, retest):
     [("", "true", "true"), ("unit", "true", "false"), ("integration", "false", "true"), ("integration,unit", "true", "true")],
 )
 def test_lanes_select_known_lanes_and_empty_selects_all(resolve, lanes, unit, integration):
-    proc, out = resolve("topic", LANES=lanes)
+    proc, out = resolve("topic", LANES=lanes, RETEST_OF="5")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert (out["lane_unit"], out["lane_integration"]) == (unit, integration)
 
 
+@pytest.mark.parametrize("lanes", ["unit", "integration", "unit,integration"])
+def test_lanes_on_a_first_run_are_refused(resolve, lanes):
+    proc, out = resolve("topic", LANES=lanes)
+    assert proc.returncode != 0 and out == {}
+    assert "lanes may narrow a retest only" in proc.stdout
+
+
 @pytest.mark.parametrize("lanes", ["e2e", "unit,e2e", "unit,", ",unit", "Unit", "unit integration", "uni"])
 def test_lanes_refuse_unknown_or_malformed_names(resolve, lanes):
-    proc, out = resolve("topic", LANES=lanes)
+    proc, out = resolve("topic", LANES=lanes, RETEST_OF="5")
     assert proc.returncode != 0 and out == {}
     assert "lanes" in proc.stdout
 
@@ -233,9 +276,22 @@ def test_a_short_or_unknown_sha_is_refused(repo, resolve):
     assert resolve("0" * 40)[0].returncode != 0
 
 
-@pytest.mark.parametrize("base, wanted", [("origin/main", "main"), ("origin/main~1", "first"), ("origin/topic", "topic")])
-def test_a_base_on_a_branch_resolves_to_its_sha(repo, resolve, base, wanted):
+@pytest.mark.parametrize("base", ["origin/topic", "origin/topic~0"])
+def test_a_base_off_the_default_branch_is_refused(resolve, base):
     proc, out = resolve("topic", base=base)
+    assert proc.returncode != 0 and out == {}
+    assert "base must be a commit on the default branch" in proc.stdout
+
+
+def test_a_base_sha_off_the_default_branch_is_refused(repo, resolve):
+    proc, out = resolve("topic", base=repo["topic"])
+    assert proc.returncode != 0 and out == {}
+    assert "base must be a commit on the default branch" in proc.stdout
+
+
+@pytest.mark.parametrize("base, wanted", [("origin/main", "main"), ("origin/main~1", "first"), ("first", "first")])
+def test_a_base_on_the_default_branch_resolves_to_its_sha(repo, resolve, base, wanted):
+    proc, out = resolve("topic", base=repo["first"] if base == "first" else base)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["base_sha"] == repo[wanted]
 

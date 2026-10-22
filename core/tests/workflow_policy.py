@@ -580,10 +580,6 @@ def entry_contract_violations(docs):
     options = inputs["fault"].get("options", [])
     if options[:1] != ["none"] or set(options) != set(FAULTS) or len(options) != len(set(options)):
         found.append(f"{ENTRY}: fault options are {options}, wanted none first and exactly {sorted(FAULTS)}")
-    jobs_text = str(docs[ENTRY]["jobs"])
-    for option in options:
-        if option != "none" and f"'{option}'" not in jobs_text:
-            found.append(f"{ENTRY}: fault option {option} is not referenced by any job")
     for job_id in lane_jobs_of(docs):
         given = docs[ENTRY]["jobs"][job_id].get("with", {})
         for option, (fail_test, kill) in FAULTS.items():
@@ -819,9 +815,9 @@ SECRETS_WHOLE = re.compile(r"toJSON\s*\(\s*secrets\s*\)|\bsecrets\s*\[", re.I)
 THIRD_PARTY_MODULES = {"pytest", "pip"}
 EXPECTED_MODULES = {"core.route", "core.classify", "core.gate", "adapters.dotnet.affected", "adapters.dotnet.plan"}
 EXPECTED_SCRIPTS = {"core/resolve_refs.sh", "core/prejob.sh", "core/kill_own_runner.sh", "adapters/dotnet/cache_build.sh"}
-PYTHON_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
+PYTHON_MODULE = re.compile(r"\bpython3?(?:\s+-[A-Za-z]+)*\s+-m\s+([A-Za-z_][\w.]*)")
 PYTHON_FILE = re.compile(r"\bpython3?\s+([^\s\-][^\s;|&)]*\.py)\b")
-SHELL_SCRIPT = re.compile(r"""(?:^|[\s;&|(])(?:sh|bash)\s+(?:-[A-Za-z]+\s+)*["']?([^\s"';|&)]+\.sh)\b""")
+SHELL_SCRIPT = re.compile(r"""(?:^|[\s;&|(])(?:sh|bash|\.)\s+(?:-[A-Za-z]+\s+)*["']?([^\s"';|&)]+\.sh)\b""")
 DIRECT_SCRIPT = re.compile(r"""(?:^|[\s;&|(])["']?(\./[^\s"';|&)]+\.sh)\b""")
 SCRIPT_PREFIXES = ("$GITHUB_WORKSPACE/", "${GITHUB_WORKSPACE}/", ".sim-trusted/", "./")
 

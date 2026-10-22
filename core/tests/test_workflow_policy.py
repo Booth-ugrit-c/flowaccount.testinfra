@@ -1262,7 +1262,9 @@ def test_every_shipped_invocation_resolves_and_the_scan_sees_the_known_ones():
         ("trial-gate.yml", "python3 -m workload run", "python3 workload/missing.py run", "workload/missing.py does not resolve"),
         (TOP, "    uses: ./.github/workflows/sim-gate-lane.yml", "    uses: ./.github/workflows/sim-gate-lanes.yml", "uses ./.github/workflows/sim-gate-lanes.yml, which does not exist"),
         (LANE, "python3 -m core.route", "python3 -c 'import core.route'", "no workflow runs python -m core.route"),
-        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: . core/resolve_refs.sh\n", "no workflow runs core/resolve_refs.sh"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: cat core/resolve_refs.sh\n", "no workflow runs core/resolve_refs.sh"),
+        (LANE, "python3 -m core.route", "python3 -I -m core.nothere", "python -m core.nothere does not resolve"),
+        (TOP, "        run: sh core/resolve_refs.sh\n", "        run: . core/nothere.sh\n", "core/nothere.sh does not resolve"),
     ],
 )
 def test_an_invocation_that_does_not_resolve_at_the_head_is_refused(copy, filename, old, new, expected):
