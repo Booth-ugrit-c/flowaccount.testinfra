@@ -1433,6 +1433,12 @@ WORKSPACE_MUTATIONS = {
         WS_SAVE_RUN.replace("        run: sh", '        run: sh adapters/workspace/test_lane.sh "$RUNNER_TEMP/unit.txt" "$RUNNER_TEMP/counts" 0 && sh'),
         "runs workspace code in step Save cache",
     ),
+    "the save job with an extra step": (
+        WS,
+        "      - name: Save cache\n",
+        "      - name: Extra\n        run: echo extra\n      - name: Save cache\n",
+        "the save job must be exactly the pinned job",
+    ),
     "the save job running nx": (WS, WS_INSTALL + "      - name: Save cache\n", WS_INSTALL + "          npx nx graph\n      - name: Save cache\n", "runs workspace code in step Install"),
     "the save job off the default branch": (WS, WS_SAVE_TOP, WS_SAVE_TOP.replace("github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && ", ""), "the save job must run only on the default-branch tip"),
     "the save job with a fault": (WS, WS_SAVE_TOP, WS_SAVE_TOP.replace(" && inputs.sim_fault == ''", ""), "the save job must run only on the default-branch tip"),
